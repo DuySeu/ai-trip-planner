@@ -1,0 +1,62 @@
+import { describe, expect, it } from "vitest";
+import { PLACES } from "../mocks/fixtures.ts";
+import { fromDraft, type TripFormValues, toCreateTripBody, validateTripForm } from "./validateTripForm.ts";
+
+const TODAY = "2026-11-17";
+const valid: TripFormValues = {
+  destination: PLACES[3] ?? null,
+  origin: " Hà Nội ",
+  start_date: "2026-12-01",
+  end_date: "2026-12-04",
+  travelers: 2,
+  group_type: "couple",
+  travel_styles: ["nature"],
+  transport_modes: [],
+  budget_amount: "5000000",
+  budget_scope: "per_person",
+  notes: "  ",
+};
+
+describe("validateTripForm", () => {
+  it("accepts_valid_values", () => {
+    expect(validateTripForm(valid, TODAY)).toEqual({});
+  });
+
+  it("rejects_start_date_before_today_in_vietnam", () => {
+    expect(validateTripForm({ ...valid, start_date: "2026-11-16" }, TODAY).start_date).toBe("form.errors.startInPast");
+  });
+
+  it("accepts_30_days_and_rejects_31", () => {
+    expect(validateTripForm({ ...valid, end_date: "2026-12-30" }, TODAY).end_date).toBeUndefined();
+    expect(validateTripForm({ ...valid, end_date: "2026-12-31" }, TODAY).end_date).toBe("form.errors.tooLong");
+  });
+
+  it("rejects_end_before_start", () => {
+    expect(validateTripForm({ ...valid, end_date: "2026-11-30" }, TODAY).end_date).toBe("form.errors.endBeforeStart");
+  });
+
+  it("requires_a_destination_from_search_and_one_style", () => {
+    const errors = validateTripForm({ ...valid, destination: null, travel_styles: [] }, TODAY);
+    expect(errors).toMatchObject({ destination: "form.errors.destination", travel_styles: "form.errors.styles" });
+  });
+
+  it("rejects_zero_budget_and_51_travelers", () => {
+    const errors = validateTripForm({ ...valid, budget_amount: "0", travelers: 51 }, TODAY);
+    expect(errors).toMatchObject({ budget_amount: "form.errors.budget", travelers: "form.errors.travelers" });
+  });
+
+  it("to_create_trip_body_sends_empty_transport_modes_and_null_notes", () => {
+    const body = toCreateTripBody(valid, "u1", null, "vi");
+    expect(body).toMatchObject({ transport_modes: [], notes: null, origin: "Hà Nội", language: "vi" });
+    expect(body.destination).toEqual({ name: "Đà Lạt", country_code: "VN", lat: 11.9404, lon: 108.4583 });
+  });
+
+  it("from_draft_fills_end_date_from_length_days", () => {
+    const values = fromDraft({ start_date: "2026-12-10", length_days: 4, travelers: 4 }, null);
+    expect(values).toMatchObject({ start_date: "2026-12-10", end_date: "2026-12-13", travelers: 4 });
+  });
+
+  it("from_draft_with_only_a_month_leaves_dates_empty", () => {
+    expect(fromDraft({ month: "2026-12" }, null)).toMatchObject({ start_date: "", end_date: "" });
+  });
+});

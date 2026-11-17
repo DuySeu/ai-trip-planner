@@ -1,0 +1,22 @@
+services:
+  # Local Postgres, configured from the DB_* values in .env
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:?set DB_USER in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:?set DB_NAME in .env}
+      # Builtin provider gives Unicode case mapping (lower('Đ') = 'đ') on Alpine's musl libc
+      POSTGRES_INITDB_ARGS: "--locale-provider=builtin --builtin-locale=C.UTF-8"
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  db-data:

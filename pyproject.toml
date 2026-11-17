@@ -1,0 +1,48 @@
+[project]
+name = "ai-trip-planner"
+version = "0.1.0"
+description = "AI trip planner backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2.9",
+    "python-dotenv",
+    "openai",
+    "openrouter",
+    "boto3",
+    "tavily-python",
+    "httpx",
+    "psycopg[binary,pool]",
+    "openpyxl",
+]
+
+[dependency-groups]
+dev = ["pytest", "ruff", "mypy"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+markers = ["integration: needs Postgres from DB_* in .env; runs in <DB_NAME>_test"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
