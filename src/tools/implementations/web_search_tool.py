@@ -1,19 +1,18 @@
 import logging
 
 from core.config import config
+from service.tavily.client import create_client
 from tools.base_tool import tool
 
 # Setup logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 # Tool schema (Anthropic format)
 SCHEMA = {
     "name": "web_search",
-    "description": "Search the web for Vietnamobile static information.",
+    "description": "Search the web for travel information: places to stay, transport, things to do and food.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -34,9 +33,6 @@ SCHEMA = {
 
 @tool(SCHEMA)
 def web_search(query, numResults=3):
-    # Lazy import: tavily-python is an optional dependency.
-    from tavily import TavilyClient
-
-    client = TavilyClient(api_key=config.TAVILY_API_KEY)
+    client = create_client(config.TAVILY_API_KEY)
     response = client.search(query, max_results=numResults)
     return response["results"]

@@ -1,6 +1,8 @@
-from typing import Dict, Any, Union, Generator
+from collections.abc import Generator
+from typing import Any
+
 from .base import LLMProvider
-from .provider import OpenAIProvider, OpenRouterProvider, BedrockProvider
+from .provider import BedrockProvider, OpenAIProvider, OpenRouterProvider
 
 
 class LLM:
@@ -21,14 +23,13 @@ class LLM:
         else:
             self.llm: LLMProvider = BedrockProvider(model_id, inference_config)
 
-    def invoke(self, message: Union[Dict[str, Any], str]) -> Dict:
+    def invoke(self, message: dict[str, Any] | str) -> dict:
         # construct message list from single message
         content = message
-        if isinstance(message, dict):
-            # adapt if needed, but assuming str or compatible dict
-            # Original code extracted text content from dict in `_prepare_payload` or `invoke`
-            if "content" in message:
-                content = message["content"]
+        # adapt if needed, but assuming str or compatible dict
+        # Original code extracted text content from dict in `_prepare_payload` or `invoke`
+        if isinstance(message, dict) and "content" in message:
+            content = message["content"]
 
         # Original code used [{"role": "user", "content": content}]
         messages = [{"role": "user", "content": content}]
@@ -41,11 +42,10 @@ class LLM:
             "output_tokens": response_obj.output_tokens,
         }
 
-    def invoke_stream(self, message: Union[Dict[str, Any], str]) -> Generator:
+    def invoke_stream(self, message: dict[str, Any] | str) -> Generator:
         content = message
-        if isinstance(message, dict):
-            if "content" in message:
-                content = message["content"]
+        if isinstance(message, dict) and "content" in message:
+            content = message["content"]
 
         messages = [{"role": "user", "content": content}]
 

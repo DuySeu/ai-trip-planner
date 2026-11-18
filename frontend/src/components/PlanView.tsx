@@ -10,10 +10,10 @@ import { TransportOptions } from "./TransportOptions.tsx";
 
 const SECTION = "flex flex-col gap-4";
 const LIST = `${SURFACE} px-5 divide-y divide-border`;
-const ROW = "flex min-h-14 items-start gap-3 py-3 [&>svg]:mt-0.5 [&>svg]:shrink-0";
+const ROW = "flex min-h-14 flex-wrap items-start gap-x-3 gap-y-1 py-3 sm:flex-nowrap [&>svg]:mt-0.5 [&>svg]:shrink-0";
 const BODY = "flex min-w-0 flex-1 flex-col gap-0.5 wrap-anywhere";
 const ITEM_TITLE = "flex flex-wrap items-center gap-2 font-medium";
-const PRICE_COL = "flex flex-col items-end text-right";
+const PRICE_COL = "flex flex-col max-sm:basis-full max-sm:items-start sm:items-end sm:text-right [&>span]:max-sm:items-start";
 const MUTED_SMALL = "text-sm text-muted-foreground";
 
 interface Props {
@@ -213,7 +213,7 @@ export function PlanView({ trip }: Props) {
                 )}
                 <p className={BODY}>{entry.label}</p>
                 {entry.price_per_person > 0 && (
-                  <div className={PRICE_COL}>
+                  <div className={`${PRICE_COL} max-sm:pl-8`}>
                     <Price
                       amount={String(entry.price_per_person)}
                       currency={entry.price_currency}

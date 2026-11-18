@@ -32,10 +32,7 @@ class TripRow:
     start_date: date
     end_date: date
     travelers: int
-    group_type: str
     travel_styles: list[str]
-    transport_modes: list[str]
-    conversation_id: UUID | None
     budget_amount: Decimal
     budget_scope: str
     local_currency: str | None
@@ -60,12 +57,10 @@ def create_trip(
     request: Mapping[str, Any],
     local_currency: str | None,
     retention_days: int,
-    conversation_id: UUID | None = None,
 ) -> TripRow:
     params = {
         **_request_params(request),
         "user_id": user_id,
-        "conversation_id": conversation_id,
         "local_currency": local_currency,
         "retention_days": retention_days,
     }
@@ -89,6 +84,13 @@ def list_trips(conn: Connection[Any], user_id: UUID, limit: int, offset: int) ->
     params = {"user_id": user_id, "limit": limit, "offset": offset}
     with conn.cursor(row_factory=class_row(TripRow)) as cur:
         return cur.execute(QUERIES["list_trips"], params).fetchall()
+
+
+# How many trips the user has
+def count_trips(conn: Connection[Any], user_id: UUID) -> int:
+    row = conn.execute(QUERIES["count_trips"], {"user_id": user_id}).fetchone()
+    assert row is not None
+    return int(row[0])
 
 
 # Set the trip status; failure_reason is cleared unless given
@@ -164,9 +166,7 @@ def _request_params(request: Mapping[str, Any]) -> dict[str, Any]:
         "start_date": date.fromisoformat(str(request["start_date"])),
         "end_date": date.fromisoformat(str(request["end_date"])),
         "travelers": request["travelers"],
-        "group_type": request["group_type"],
         "travel_styles": list(request["travel_styles"]),
-        "transport_modes": list(request.get("transport_modes") or []),
         "budget_amount": Decimal(str(request["budget_amount"])),
         "budget_scope": request["budget_scope"],
         "language": request.get("language", "en"),

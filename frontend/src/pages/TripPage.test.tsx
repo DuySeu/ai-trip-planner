@@ -2,7 +2,7 @@ import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDays, todayInVietnam } from "../format/dates.ts";
-import { DOMESTIC_TRIP_ID, FAILED_TRIP_ID, MINH_ID } from "../mocks/fixtures.ts";
+import { DOMESTIC_TRIP_ID, FAILED_TRIP_ID, MINH_ID, SEED_CONVERSATION_ID } from "../mocks/fixtures.ts";
 import { type MockTrip, mockDb, REPLAN_HEAD_START_MS } from "../mocks/mockDb.ts";
 import { server } from "../mocks/server.ts";
 import { renderApp } from "../test/renderApp.tsx";
@@ -138,12 +138,14 @@ describe("TripPage chat", () => {
   it("trip_chat_sends_trip_id_and_plan_revision", async () => {
     const bodies: unknown[] = [];
     server.events.on("request:start", async ({ request }) => {
-      if (request.url.includes("/messages")) bodies.push(await request.clone().json());
+      if (new URL(request.url).pathname.endsWith("/chat")) bodies.push(await request.clone().json());
     });
     const { user } = renderApp(`/trips/${DOMESTIC_TRIP_ID}`);
     await screen.findByRole("heading", { level: 1, name: /Đà Lạt in 4 days/ });
     await user.type(screen.getByRole("textbox", { name: "Message" }), "Is it cold at night?{Enter}");
-    await expect.poll(() => bodies).toEqual([{ content: "Is it cold at night?", trip_id: DOMESTIC_TRIP_ID, plan_revision: 1 }]);
+    await expect.poll(() => bodies).toEqual([
+      { conversation_id: SEED_CONVERSATION_ID, content: "Is it cold at night?", trip_id: DOMESTIC_TRIP_ID, plan_revision: 1 },
+    ]);
   });
 
   it("trip_chat_is_disabled_until_first_plan_is_ready", async () => {

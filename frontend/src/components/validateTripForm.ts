@@ -1,11 +1,9 @@
 import type {
   BudgetScope,
   CreateTripBody,
-  GroupType,
   Language,
   Place,
   RequestDraft,
-  TransportMode,
   TravelStyle,
 } from "../api/api.types.ts";
 import { addDays, tripDays } from "../format/dates.ts";
@@ -15,6 +13,7 @@ const MAX_TRIP_DAYS = 30;
 const MAX_TRAVELERS = 50;
 const MAX_NOTES = 2000;
 const DEFAULT_TRAVELERS = 2;
+const DEFAULT_ORIGIN = "Hà Nội";
 
 // The form's own state; destination only ever comes from the place search
 export interface TripFormValues {
@@ -23,9 +22,7 @@ export interface TripFormValues {
   start_date: string;
   end_date: string;
   travelers: number;
-  group_type: GroupType;
   travel_styles: TravelStyle[];
-  transport_modes: TransportMode[];
   budget_amount: string;
   budget_scope: BudgetScope;
   notes: string;
@@ -58,22 +55,18 @@ export function validateTripForm(values: TripFormValues, today: string): TripFor
 export function toCreateTripBody(
   values: TripFormValues,
   userId: string,
-  conversationId: string | null,
   lang: Language,
 ): CreateTripBody {
   const place = values.destination as Place;
   const notes = values.notes.trim();
   return {
     user_id: userId,
-    conversation_id: conversationId,
     destination: { name: place.name, country_code: place.country_code, lat: place.lat, lon: place.lon },
     origin: values.origin.trim(),
     start_date: values.start_date,
     end_date: values.end_date,
     travelers: values.travelers,
-    group_type: values.group_type,
     travel_styles: values.travel_styles,
-    transport_modes: values.transport_modes,
     budget_amount: values.budget_amount,
     budget_scope: values.budget_scope,
     language: lang,
@@ -91,13 +84,11 @@ export function fromDraft(draft: RequestDraft | null, place: Place | null): Trip
   const end = d.end_date ?? (start && d.length_days ? addDays(start, d.length_days - 1) : "");
   return {
     destination: place ?? fromDraftPlace,
-    origin: d.origin ?? "",
+    origin: d.origin ?? DEFAULT_ORIGIN,
     start_date: start,
     end_date: end,
     travelers: d.travelers ?? DEFAULT_TRAVELERS,
-    group_type: d.group_type ?? "friends",
     travel_styles: d.travel_styles ?? [],
-    transport_modes: d.transport_modes ?? [],
     budget_amount: d.budget_amount ? String(Math.round(Number(d.budget_amount))) : "",
     budget_scope: d.budget_scope ?? "per_person",
     notes: d.notes ?? "",
@@ -113,9 +104,7 @@ export function toDraft(values: TripFormValues): RequestDraft {
     ...(values.start_date ? { start_date: values.start_date } : {}),
     ...(values.end_date ? { end_date: values.end_date } : {}),
     travelers: values.travelers,
-    group_type: values.group_type,
     travel_styles: values.travel_styles,
-    transport_modes: values.transport_modes,
     ...(values.budget_amount ? { budget_amount: values.budget_amount } : {}),
     budget_scope: values.budget_scope,
     ...(values.notes.trim() ? { notes: values.notes.trim() } : {}),

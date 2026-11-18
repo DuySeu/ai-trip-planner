@@ -58,8 +58,8 @@ export function TripPage() {
   const data = trip.data;
   const isActive = (ACTIVE_STATUSES as readonly string[]).includes(data.status);
   const hasPlan = data.plan !== null;
-  // The trip's own conversation, else the visitor's latest one, else one created on the first send
-  const conversationId = data.conversation_id ?? createdConversationId ?? conversations.data?.[0]?.id ?? null;
+  // The conversation created on the first send, else the visitor's latest one
+  const conversationId = createdConversationId ?? conversations.data?.[0]?.id ?? null;
 
   const chat = (
     <ChatPanel

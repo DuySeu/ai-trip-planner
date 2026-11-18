@@ -1,38 +1,36 @@
 from __future__ import annotations
 
-import pytest
+from research.queries import build_queries
+from tests.fixtures.builders import bangkok_request, dalat_request
 
-from db.queries import load_queries
-
-
-def test_load_queries_splits_named_blocks(tmp_path):
-    path = tmp_path / "users.sql"
-    path.write_text(
-        "-- name: get_user\nSELECT * FROM users\nWHERE id = %(id)s;\n\n"
-        "-- name: delete_user\nDELETE FROM users WHERE id = %(id)s;\n"
-    )
-    assert load_queries(path) == {
-        "get_user": "SELECT * FROM users\nWHERE id = %(id)s;",
-        "delete_user": "DELETE FROM users WHERE id = %(id)s;",
-    }
+KINDS = {"accommodation", "transport", "local_transport", "activities", "food"}
 
 
-def test_load_queries_rejects_duplicate_name(tmp_path):
-    path = tmp_path / "users.sql"
-    path.write_text("-- name: a\nSELECT 1;\n-- name: a\nSELECT 2;\n")
-    with pytest.raises(ValueError, match="duplicate"):
-        load_queries(path)
+def test_build_queries_returns_five_kinds_in_vietnamese_for_vn():
+    queries = build_queries(dalat_request())
+
+    assert set(queries) == KINDS
+    assert all("Đà Lạt" in q for q in queries.values())
+    assert "khách sạn" in queries["accommodation"]
+    assert "Ho Chi Minh City" in queries["transport"]
 
 
-def test_load_queries_rejects_empty_block(tmp_path):
-    path = tmp_path / "users.sql"
-    path.write_text("-- name: a\n\n-- name: b\nSELECT 2;\n")
-    with pytest.raises(ValueError, match="empty"):
-        load_queries(path)
+def test_build_queries_uses_english_abroad():
+    queries = build_queries(bangkok_request())
+
+    assert set(queries) == KINDS
+    assert all("Bangkok" in q for q in queries.values())
+    assert "hotels" in queries["accommodation"]
+    assert not any("khách sạn" in q for q in queries.values())
 
 
-def test_load_queries_rejects_sql_before_first_name(tmp_path):
-    path = tmp_path / "users.sql"
-    path.write_text("SELECT 1;\n-- name: a\nSELECT 2;\n")
-    with pytest.raises(ValueError):
-        load_queries(path)
+def test_build_queries_transport_names_origin_and_destination():
+    queries = build_queries(bangkok_request())
+
+    assert "Ho Chi Minh City" in queries["transport"] and "Bangkok" in queries["transport"]
+
+
+def test_build_queries_names_the_travel_styles_in_activities():
+    queries = build_queries(bangkok_request(travel_styles=["culture", "nightlife"]))
+
+    assert "culture" in queries["activities"] and "nightlife" in queries["activities"]

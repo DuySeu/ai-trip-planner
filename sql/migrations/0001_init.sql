@@ -21,16 +21,10 @@ CREATE TABLE trips (
     start_date          date NOT NULL,
     end_date            date NOT NULL,
     travelers           int NOT NULL CHECK (travelers BETWEEN 1 AND 50),
-    group_type          text NOT NULL CHECK (group_type IN ('solo', 'couple', 'family', 'friends', 'colleagues')),
     travel_styles       text[] NOT NULL CHECK (
         cardinality(travel_styles) >= 1
         AND travel_styles <@ ARRAY['relax', 'adventure', 'culture', 'food', 'nature', 'nightlife', 'shopping', 'luxury', 'budget']
     ),
-    -- Empty means the system suggests transport
-    transport_modes     text[] NOT NULL DEFAULT '{}' CHECK (
-        transport_modes <@ ARRAY['flight', 'train', 'bus', 'car', 'motorbike', 'boat']
-    ),
-    conversation_id     uuid,
     budget_amount       numeric(14, 2) NOT NULL CHECK (budget_amount > 0),
     budget_scope        text NOT NULL CHECK (budget_scope IN ('per_person', 'total')),
     local_currency      char(3) CHECK (local_currency ~ '^[A-Z]{3}$'),
@@ -59,7 +53,6 @@ CREATE TABLE trips (
 
 CREATE INDEX trips_user_id_idx ON trips (user_id, created_at DESC);
 CREATE INDEX trips_expires_at_idx ON trips (expires_at);
-CREATE INDEX trips_conversation_id_idx ON trips (conversation_id);
 
 -- Not tied to one task or one trip: any conversation reads every trip of its user. Lives until its user is deleted.
 CREATE TABLE conversations (
@@ -72,10 +65,6 @@ CREATE TABLE conversations (
 );
 
 CREATE INDEX conversations_user_id_idx ON conversations (user_id, created_at DESC);
-
-ALTER TABLE trips
-    ADD CONSTRAINT trips_conversation_fk FOREIGN KEY (conversation_id)
-        REFERENCES conversations (id) ON DELETE SET NULL;
 
 CREATE TABLE messages (
     id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),

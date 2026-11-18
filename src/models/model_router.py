@@ -1,1 +1,396 @@
-"""Model routing."""
+"""Model routing: an ordered fallback chain per purpose, call logging, quota blocks and a call budget."""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Literal, NoReturn, Protocol
+from uuid import UUID
+
+import httpx
+from openrouter import errors as openrouter_errors
+from pydantic import BaseModel, ValidationError
+
+from core.constants import ModelId
+from core.exceptions import InvalidLLMOutput, LLMBudgetExceeded, LLMUnavailable, QuotaExhausted
+from db.repositories.llm_calls import LlmCallRecord
+from models.base import LLMProvider, LLMResponse, StreamChunk
+
+Purpose = Literal["generate", "repair", "classify", "edit", "answer", "discover", "suggest"]
+Outcome = Literal[
+    "ok", "rate_limited", "quota_exhausted", "timeout", "provider_error", "invalid_output"
+]
+
+SERVICE = "openrouter"
+MAX_ERROR_CHARS = 300
+KNOWN_MODEL_IDS = frozenset(
+    value for name, value in vars(ModelId).items() if isinstance(value, str) and name[0] != "_"
+)
+# Errors a provider call can raise for a model that is down or limited; anything else is a bug
+PROVIDER_ERRORS = (
+    openrouter_errors.OpenRouterError,
+    openrouter_errors.NoResponseError,
+    httpx.HTTPError,
+)
+TIMEOUT_STATUSES = frozenset({408, 504, 524})
+
+
+# The LLM calls one job attempt may still make; the only mutable object here
+@dataclass
+class CallBudget:
+    limit: int
+    used: int = 0
+
+    # Count one call, or refuse it when the limit is reached
+    def take(self) -> None:
+        if self.used >= self.limit:
+            raise LLMBudgetExceeded(f"LLM call budget of {self.limit} is used up")
+        self.used += 1
+
+
+# What a call belongs to, for the log and the budget
+@dataclass(frozen=True)
+class CallContext:
+    trip_id: UUID | None = None
+    conversation_id: UUID | None = None
+    message_id: UUID | None = None
+    budget: CallBudget | None = None
+
+
+# Where call records and quota blocks are kept
+class CallSink(Protocol):
+    # Store one call record
+    def log(self, record: LlmCallRecord) -> None: ...
+
+    # Block a service until its quota resets
+    def block(self, service: str, until: datetime, reason: str) -> None: ...
+
+    # When the service's block ends, or None
+    def blocked_until(self, service: str) -> datetime | None: ...
+
+
+# Name the outcome of a failed provider call; the daily cap is told from a per-minute 429 by its text
+def classify_error(exc: Exception, daily_cap_pattern: str) -> Outcome:
+    if isinstance(exc, openrouter_errors.OpenRouterError):
+        if exc.status_code == 429:
+            text = f"{exc.message} {exc.body}"
+            return (
+                "quota_exhausted"
+                if re.search(daily_cap_pattern, text, re.IGNORECASE)
+                else "rate_limited"
+            )
+        return "timeout" if exc.status_code in TIMEOUT_STATUSES else "provider_error"
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    return "provider_error"
+
+
+class ModelRouter:
+    def __init__(
+        self,
+        provider_for: Callable[[str], LLMProvider],
+        models: Mapping[Purpose, Sequence[str]],
+        sink: CallSink,
+        daily_cap_pattern: str,
+        reset_hour_utc: int,
+        now: Callable[[], datetime],
+    ) -> None:
+        self._provider_for = provider_for
+        self._models = models
+        self._sink = sink
+        self._daily_cap_pattern = daily_cap_pattern
+        self._reset_hour_utc = reset_hour_utc
+        self._now = now
+
+    # The configured model ids for a purpose, in order, without ids missing from ModelId
+    def models_for(self, purpose: Purpose) -> list[str]:
+        return [m for m in self._models.get(purpose, ()) if m in KNOWN_MODEL_IDS]
+
+    # One call to one model: checks the block, takes the budget, logs, maps errors
+    def invoke_model(
+        self,
+        model_id: str,
+        purpose: Purpose,
+        messages: Sequence[Mapping[str, Any]],
+        system_prompt: str,
+        ctx: CallContext,
+    ) -> LLMResponse:
+        self._begin(ctx)
+        started = time.monotonic()
+        try:
+            response = self._provider_for(model_id).invoke(
+                [dict(m) for m in messages], system_prompt
+            )
+        except PROVIDER_ERRORS as exc:
+            outcome = classify_error(exc, self._daily_cap_pattern)
+            self._log(model_id, purpose, ctx, outcome, started, error=exc)
+            self._raise_for(outcome, exc)
+        assert isinstance(response, LLMResponse)
+        self._log(
+            model_id,
+            purpose,
+            ctx,
+            "ok",
+            started,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+        )
+        return response
+
+    # Try the models of the purpose in order and return the answer with the model that gave it
+    def invoke_with_model(
+        self,
+        purpose: Purpose,
+        messages: Sequence[Mapping[str, Any]],
+        system_prompt: str,
+        ctx: CallContext,
+    ) -> tuple[LLMResponse, str]:
+        for model_id in self.models_for(purpose):
+            try:
+                return self.invoke_model(model_id, purpose, messages, system_prompt, ctx), model_id
+            except LLMUnavailable:
+                continue
+        raise LLMUnavailable(f"no model answered for purpose {purpose}")
+
+    # Same as invoke_with_model, without the model id
+    def invoke(
+        self,
+        purpose: Purpose,
+        messages: Sequence[Mapping[str, Any]],
+        system_prompt: str,
+        ctx: CallContext,
+    ) -> LLMResponse:
+        return self.invoke_with_model(purpose, messages, system_prompt, ctx)[0]
+
+    # Stream text; the next model is tried only while no token was sent yet
+    def stream(
+        self,
+        purpose: Purpose,
+        messages: Sequence[Mapping[str, Any]],
+        system_prompt: str,
+        ctx: CallContext,
+    ) -> Iterator[str]:
+        for model_id in self.models_for(purpose):
+            self._begin(ctx)
+            started = time.monotonic()
+            sent = False
+            outcome: Outcome = "ok"
+            error: Exception | None = None
+            try:
+                for chunk in self._provider_for(model_id).invoke_stream(
+                    [dict(m) for m in messages], system_prompt
+                ):
+                    if chunk.delta:
+                        sent = True
+                        yield chunk.delta
+                return
+            except PROVIDER_ERRORS as exc:
+                outcome = classify_error(exc, self._daily_cap_pattern)
+                error = exc
+                if sent or outcome == "quota_exhausted":
+                    self._raise_for(outcome, exc)
+            finally:
+                self._log(model_id, purpose, ctx, outcome, started, error=error)
+        raise LLMUnavailable(f"no model answered for purpose {purpose}")
+
+    # Refuse while the service is blocked, then count the call against the budget
+    def _begin(self, ctx: CallContext) -> None:
+        until = self._sink.blocked_until(SERVICE)
+        if until is not None and until > self._now():
+            raise QuotaExhausted(until)
+        if ctx.budget is not None:
+            ctx.budget.take()
+
+    # The next reset_hour_utc:00 strictly after now
+    def _next_reset(self) -> datetime:
+        now = self._now()
+        reset = now.replace(hour=self._reset_hour_utc, minute=0, second=0, microsecond=0)
+        return reset if reset > now else reset + timedelta(days=1)
+
+    # Turn a failed call into the exception callers handle; a daily cap also blocks the service
+    def _raise_for(self, outcome: Outcome, exc: Exception) -> NoReturn:
+        if outcome == "quota_exhausted":
+            until = self._next_reset()
+            self._sink.block(SERVICE, until, str(exc)[:MAX_ERROR_CHARS])
+            raise QuotaExhausted(until) from exc
+        raise LLMUnavailable(f"{outcome}: {exc}"[:MAX_ERROR_CHARS]) from exc
+
+    # Record one call's outcome; never the prompt or the answer
+    def _log(
+        self,
+        model_id: str,
+        purpose: Purpose,
+        ctx: CallContext,
+        outcome: Outcome,
+        started: float,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self._sink.log(
+            LlmCallRecord(
+                purpose=purpose,
+                model_id=model_id,
+                outcome=outcome,
+                trip_id=ctx.trip_id,
+                conversation_id=ctx.conversation_id,
+                message_id=ctx.message_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=round((time.monotonic() - started) * 1000),
+                error=None
+                if error is None
+                else f"{type(error).__name__}: {error}"[:MAX_ERROR_CHARS],
+            )
+        )
+
+
+# Exposes the router's fallback chain for one purpose as a single LLMProvider
+class RouterProvider(LLMProvider):
+    def __init__(self, router: ModelRouter, purpose: Purpose, ctx: CallContext) -> None:
+        models = router.models_for(purpose)
+        super().__init__(models[0] if models else purpose, {})
+        self._router = router
+        self._purpose = purpose
+        self._ctx = ctx
+
+    # Answer through the chain; model_id then names the model that answered
+    def invoke(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        system_prompt: str,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> LLMResponse:
+        if tools:
+            raise ValueError("RouterProvider does not support tools")
+        response, self.model_id = self._router.invoke_with_model(
+            self._purpose, messages, system_prompt, self._ctx
+        )
+        return response
+
+    # Stream text deltas through the chain
+    def invoke_stream(  # type: ignore[override]
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        system_prompt: str,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[StreamChunk]:
+        if tools:
+            raise ValueError("RouterProvider does not support tools")
+        for text in self._router.stream(self._purpose, messages, system_prompt, self._ctx):
+            yield StreamChunk(delta=text)
+
+
+REPAIR_PROMPT = """Your previous reply could not be used. Errors, one per line:
+{errors}
+
+Fix every error above and reply again with the corrected answer to the same request.
+Return exactly one JSON object that validates against the schema, with no text before or after it and no code fence.
+"""
+
+
+# A validated model output and the model that produced it
+@dataclass(frozen=True)
+class JsonResult[T: BaseModel]:
+    value: T
+    model_id: str
+
+
+# The first JSON object in the text, skipping prose and code fences, or the reasons there is none
+def extract_json_object(text: str | None) -> tuple[dict[str, Any] | None, list[str]]:
+    if not text or not text.strip():
+        return None, ["response: empty, expected one JSON object"]
+    start = text.find("{")
+    if start == -1:
+        return None, ["response: no JSON object found"]
+    try:
+        data, _ = json.JSONDecoder().raw_decode(text, start)
+    except json.JSONDecodeError as e:
+        return None, [f"response: invalid or truncated JSON ({e.msg} at char {e.pos})"]
+    if not isinstance(data, dict):
+        return None, [f"response: expected a JSON object, got {type(data).__name__}"]
+    return data, []
+
+
+# Call the models of the purpose in order; each gets one repair call showing its answer and the errors
+def call_json[T: BaseModel](
+    router: ModelRouter,
+    purpose: Purpose,
+    system_prompt: str,
+    messages: Sequence[Mapping[str, Any]],
+    schema: type[T],
+    check: Callable[[T], list[str]] | None,
+    ctx: CallContext,
+) -> JsonResult[T]:
+    last_errors: list[str] = []
+    for model_id in router.models_for(purpose):
+        attempt_purpose: Purpose = purpose
+        attempt_messages = list(messages)
+        for _ in range(2):
+            try:
+                response = router.invoke_model(
+                    model_id, attempt_purpose, attempt_messages, system_prompt, ctx
+                )
+            except LLMUnavailable:
+                break
+            data, errors = extract_json_object(response.answer)
+            value: T | None = None
+            if data is not None:
+                try:
+                    value = schema.model_validate(data)
+                except ValidationError as e:
+                    errors = [
+                        f"{'.'.join(str(part) for part in err['loc']) or '(root)'}: {err['msg']}"
+                        for err in e.errors()
+                    ]
+            if value is not None:
+                errors = check(value) if check else []
+                if not errors:
+                    return JsonResult(value, model_id)
+            last_errors = errors
+            attempt_purpose = "repair"
+            attempt_messages = [
+                *messages,
+                {"role": "assistant", "content": response.answer or "(empty)"},
+                {"role": "user", "content": REPAIR_PROMPT.format(errors="\n".join(errors))},
+            ]
+    if last_errors:
+        raise InvalidLLMOutput(last_errors)
+    raise LLMUnavailable(f"no model answered for purpose {purpose}")
+
+
+# Keys that only add size: display titles and defaults
+NOISE_KEYS = frozenset({"title", "default"})
+
+
+# Copy a schema node without the noise keys; the keys of a "properties" map are field names, kept
+def _strip(node: Any, drop: Mapping[str, AbstractSet[str]], owner: str | None = None) -> Any:
+    if isinstance(node, list):
+        return [_strip(n, drop) for n in node]
+    if not isinstance(node, dict):
+        return node
+    out: dict[str, Any] = {}
+    for key, value in node.items():
+        if key == "properties" and isinstance(value, dict):
+            hidden = drop.get(owner or "", frozenset())
+            out[key] = {k: _strip(v, drop) for k, v in value.items() if k not in hidden}
+        elif key == "required" and isinstance(value, list):
+            hidden = drop.get(owner or "", frozenset())
+            out[key] = [k for k in value if k not in hidden]
+        elif key == "$defs" and isinstance(value, dict):
+            out[key] = {name: _strip(v, drop, name) for name, v in value.items()}
+        elif key not in NOISE_KEYS:
+            out[key] = _strip(value, drop)
+    return out
+
+
+# The model's JSON schema as one compact line, without titles, defaults or the dropped fields
+# drop maps a model class name to the field names to hide, such as {"PlanItem": {"id"}}
+def compact_schema(model: type[BaseModel], drop: Mapping[str, AbstractSet[str]]) -> str:
+    schema = _strip(model.model_json_schema(), drop, model.__name__)
+    return json.dumps(schema, separators=(",", ":"), ensure_ascii=True)

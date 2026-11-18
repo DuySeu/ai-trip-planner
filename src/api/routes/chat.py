@@ -1,66 +1,143 @@
-"""Chat endpoint."""
+"""Conversation routes: start, list, read, rename, delete, and the streamed chat reply."""
 
-from typing import Optional
-from fastapi import APIRouter, HTTPException
+from __future__ import annotations
+
+from collections.abc import Iterator
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from core.constants import model
-from models.llm_factory import LLM
+from api.deps import Conn, Deps, limit_chat, require_quota
+from api.envelope import ApiResponse, PageMeta
+from api.schemas.chat import (
+    ConversationDetail,
+    ConversationOut,
+    CreateConversationBody,
+    RenameBody,
+    SendMessageBody,
+    conversation_out,
+    message_out,
+)
+from chat.chat_service import ChatDeps, ChatTurn, prepare_message, stream_reply
+from chat.events import to_sse
+from core.exceptions import LimitExceeded
+from db.repositories import conversations, messages, users
 
 router = APIRouter()
 
-
-class ChatRequest(BaseModel):
-    message: str
-    provider: str = "openrouter"  # "openai" | "openrouter" | "bedrock"
-    model_id: str = model.NEMOTRON_3_NANO_30B_A3B
-    system_prompt: str = "You are a helpful assistant."
-    max_tokens: int = 1000
-    temperature: float = 0.7
-    top_p: float = 0.9
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
+DEFAULT_MESSAGES = 50
+MAX_MESSAGES = 200
+MAX_TITLE_CHARS = 80
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
-class ChatResponse(BaseModel):
-    answer: Optional[str] = None
-    input_tokens: int
-    output_tokens: int
+# What a chat turn needs, built from the shared services; the search goes through the cache
+def get_chat_deps(deps: Deps) -> ChatDeps:
+    return ChatDeps(deps.pool, deps.router, deps.search, deps.settings, deps.now)
 
 
-def _build_llm(req: ChatRequest) -> LLM:
-    inference_config = {
-        "max_tokens": req.max_tokens,
-        "temperature": req.temperature,
-        "top_p": req.top_p,
-    }
-    return LLM(
-        system_prompt=req.system_prompt,
-        inference_config=inference_config,
-        provider=req.provider,
-        model_id=req.model_id,
+ChatDepsDep = Annotated[ChatDeps, Depends(get_chat_deps)]
+
+
+# The reply as server-sent events. When the client leaves, this generator is closed and drops
+# the reply generator, whose own `finally` saves the text sent so far (CPython closes on drop).
+def sse_stream(turn: ChatTurn, chat_deps: ChatDeps) -> Iterator[str]:
+    for event in stream_reply(turn, chat_deps):
+        yield to_sse(event)
+
+
+# POST /conversations - Start a conversation, optionally with the form fields entered so far
+@router.post("/conversations", status_code=201)
+def create_conversation(body: CreateConversationBody, conn: Conn) -> ApiResponse[ConversationOut]:
+    users.get_user(conn, body.user_id)
+    row = conversations.create_conversation(conn, body.user_id, body.draft)
+    conn.commit()
+    return ApiResponse(success=True, data=conversation_out(row))
+
+
+# GET /users/{user_id}/conversations - A user's conversations, most recently active first, paged
+@router.get("/users/{user_id}/conversations")
+def list_user_conversations(
+    user_id: UUID,
+    conn: Conn,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ApiResponse[list[ConversationOut]]:
+    users.get_user(conn, user_id)
+    rows = conversations.list_conversations(conn, user_id, limit, offset)
+    return ApiResponse(
+        success=True,
+        data=[conversation_out(row) for row in rows],
+        meta=PageMeta(
+            total=conversations.count_conversations(conn, user_id), limit=limit, offset=offset
+        ),
     )
 
 
-@router.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
-    """Send a single message to the LLM and return the full answer."""
-    llm = _build_llm(req)
-    try:
-        return llm.invoke(req.message)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+# GET /conversations/{conversation_id} - A conversation with its draft and a page of messages
+@router.get("/conversations/{conversation_id}")
+def get_conversation(
+    conversation_id: UUID,
+    conn: Conn,
+    limit: Annotated[int, Query(ge=1, le=MAX_MESSAGES)] = DEFAULT_MESSAGES,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ApiResponse[ConversationDetail]:
+    row = conversations.get_conversation(conn, conversation_id)
+    page = messages.list_messages(conn, conversation_id, limit, offset)
+    detail = ConversationDetail(
+        **conversation_out(row).model_dump(), messages=[message_out(m) for m in page]
+    )
+    return ApiResponse(
+        success=True,
+        data=detail,
+        meta=PageMeta(
+            total=messages.count_messages(conn, conversation_id), limit=limit, offset=offset
+        ),
+    )
 
 
-@router.post("/chat/stream")
-def chat_stream(req: ChatRequest):
-    """Stream the LLM answer chunk-by-chunk as plain text."""
-    llm = _build_llm(req)
+# PATCH /conversations/{conversation_id} - Rename; updated_at stays so the list order holds
+@router.patch("/conversations/{conversation_id}")
+def rename_conversation(
+    conversation_id: UUID, body: RenameBody, conn: Conn
+) -> ApiResponse[ConversationOut]:
+    row = conversations.rename_conversation(conn, conversation_id, body.title)
+    conn.commit()
+    return ApiResponse(success=True, data=conversation_out(row))
 
-    def token_generator():
-        try:
-            for chunk in llm.invoke_stream(req.message):
-                yield chunk
-        except Exception as e:
-            yield f"\n[error] {type(e).__name__}: {e}"
 
-    return StreamingResponse(token_generator(), media_type="text/plain")
+# DELETE /conversations/{conversation_id} - Delete it and its messages
+@router.delete("/conversations/{conversation_id}", status_code=204)
+def delete_conversation(conversation_id: UUID, conn: Conn) -> Response:
+    conversations.delete_conversation(conn, conversation_id)
+    conn.commit()
+    return Response(status_code=204)
+
+
+# POST /chat - Send a message to the conversation named in the body; the reply is an SSE stream.
+# Every check and the save run in one short unit of work, so no pooled connection is held
+# while the reply streams (the stream opens its own).
+@router.post("/chat", dependencies=[Depends(limit_chat)])
+def send_message(body: SendMessageBody, deps: Deps, chat_deps: ChatDepsDep) -> StreamingResponse:
+    conversation_id = body.conversation_id
+    with deps.pool.connection() as conn:
+        owner = conversations.get_conversation(conn, conversation_id).user_id
+        if messages.count_user_messages_today(conn, owner) >= deps.settings.user_chat_per_day:
+            raise LimitExceeded("Daily message limit reached for this name, try again tomorrow")
+        require_quota("chat")(deps, conn)
+        turn = prepare_message(
+            conn,
+            conversation_id,
+            body.content,
+            body.trip_id,
+            body.plan_revision,
+            deps.settings.retention_days,
+        )
+        conversations.set_title_if_missing(conn, conversation_id, body.content[:MAX_TITLE_CHARS])
+    return StreamingResponse(
+        sse_stream(turn, chat_deps), media_type="text/event-stream", headers=SSE_HEADERS
+    )

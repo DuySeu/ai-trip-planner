@@ -62,13 +62,15 @@ export function TransportOptions({ options, currencies, sources }: Props) {
                           .join(", ")}
                       </p>
                     </div>
-                    <Price
-                      amount={String(option.price_per_person)}
-                      currency={option.price_currency}
-                      basis={option.price_basis}
-                      sourceUrl={option.source_id === null ? null : (sources[String(option.source_id)]?.url ?? null)}
-                      currencies={currencies}
-                    />
+                    <div className="flex max-sm:basis-full max-sm:pl-8 [&>span]:max-sm:items-start">
+                      <Price
+                        amount={String(option.price_per_person)}
+                        currency={option.price_currency}
+                        basis={option.price_basis}
+                        sourceUrl={option.source_id === null ? null : (sources[String(option.source_id)]?.url ?? null)}
+                        currencies={currencies}
+                      />
+                    </div>
                   </div>
                   <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 sm:pl-8 [&_dt]:font-medium [&_dt]:text-muted-foreground">
                     <div>

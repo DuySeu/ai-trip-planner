@@ -139,8 +139,8 @@ Sidebar, top to bottom:
 | Page (`frontend/src/pages/`) | Layout inside the main area |
 |---|---|
 | NamePage | single card, max 420px, centred vertically; signed-out top bar |
-| HomePage | "My trips" title with a "New trip" primary button, then a grid of trip cards (3 columns ≥1280, 2 ≥640, 1 below). Conversations are not repeated here; they live in the sidebar |
-| NewTripPage | reading column with the TripForm card; the "Not sure where? Get ideas" link sits above the destination field |
+| HomePage | "My trips" title with a "New trip" primary button (it opens the trip form in a modal, `NewTripDialog`: reading-column wide, max viewport height minus 32px, its own scroll, a sticky header with the "Plan a new trip" section title and a close icon button; Escape closes it and the form starts fresh on every open), then a grid of trip cards (3 columns ≥1280, 2 ≥640, 1 below). Conversations are not repeated here; they live in the sidebar |
+| NewTripPage | reading column with the TripForm card, opened from a suggestion card or a chat draft; "Starting from" defaults to Hà Nội when the draft has no origin; the "Not sure where? Get ideas" link sits above the destination field |
 | ChatPage | fills the whole main area edge to edge, as sketched: no outer padding, no card around the thread, no "New chat" button. Suggestion cards stack 1 per row in the thread |
 | TripPage | plan pane and chat panel as sketched; while `queued` / `researching` / `planning` the plan pane shows the progress card; the chat panel is disabled while the first plan is being made, and stays open during a re-plan, when the progress card sits above the current plan |
 
@@ -154,6 +154,7 @@ Sidebar, top to bottom:
 - **Spacing scale:** `--space-1` to `--space-12` in `frontend/index.css` (4, 8, 12, 16, 20, 24, 32, 48 px). Section gaps `--space-6`, inside a card `--space-4`, between form fields `--space-4`, between a label and its field `--space-2`.
 - **Breakpoints:** Tailwind's `sm` 640px (phone to tablet), `lg` 1024px (sidebar fixed instead of a drawer), `xl` 1280px (trip chat panel beside the plan instead of a sheet).
 - **Conventions preserved from the existing app:** none, this is new.
+- Below 640px a price that sits right of a title (plan item, transport option, stay, checklist) moves under the title, left-aligned with it, so the title keeps the full row width.
 - Body text stays under ~70 characters per line; Vietnamese strings run about 20% longer than English, so buttons never get a fixed width.
 
 ## 6 Motion
@@ -180,7 +181,7 @@ Written in tokens and states. The shared ones (button, card, badge, banner, fiel
 | Card / panel | `--card`, text `--card-foreground` | per section 4, `--radius` | padding `--space-5` | clickable trip card: hover border `--input`, active `scale(0.99)` |
 | Input, select, date | `--card` | 1px `--input`, 8px | height 44px, padding 0 `--space-3` | focus ring · error 1px `--destructive` border + 14px message in `--destructive` below · disabled `--muted` fill |
 | Place search | input as above + dropdown | dropdown `--popover`, `--surface-shadow-raised`, `--radius` | max 10 rows, 48px each: place name 16px, country 14px `--muted-foreground` | highlighted row `--accent` · empty "No places found" in `--muted-foreground` |
-| Choice chip (travel style, transport mode) | off: `--card`, 1px `--input` · on: `--accent`, 1px `--primary`, text `--accent-foreground` | 999px | height 36px, padding 0 `--space-4` | on adds a 16px check icon before the label |
+| Choice chip (travel style) | off: `--card`, 1px `--input` · on: `--accent`, 1px `--primary`, text `--accent-foreground` | 999px | height 36px, padding 0 `--space-4` | on adds a 16px check icon before the label · below the travel style chips a 14px `--muted-foreground` line (min two lines tall) shows the hovered or focused style as "**Name:** description" (the name in `--foreground` 500), and a prompt before any is touched; each checkbox carries its description as `aria-describedby`. The trip request has no transport, group or conversation field: the backend picks the transport options, and the trip is not linked to a conversation |
 | Day card | card | per section 4 | header row: date (section title) + weather chip; item rows below with `--border` dividers | - |
 | Plan item row | none (inside day card) | top 1px `--border` | min 56px; time in `--font-mono` 14px `--muted-foreground` · 20px category icon · title 16px 500 · price right-aligned | `status` booked / paid as a badge after the title |
 | Price | text `--foreground`, tabular | - | abroad: local amount first, VND below in 14px `--muted-foreground` (`≈ 1.250.000 ₫`) | source: price is a `--primary` link with a 14px external icon · estimate: price + "Estimate" badge |

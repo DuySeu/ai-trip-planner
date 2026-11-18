@@ -1,6 +1,6 @@
 import { Check, Lightbulb } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { GROUP_TYPES, TRANSPORT_MODES, TRAVEL_STYLES } from "../api/api.types.ts";
+import { TRAVEL_STYLES, type TravelStyle } from "../api/api.types.ts";
 import type { ApiError } from "../api/client.ts";
 import { addDays, locale, todayInVietnam } from "../format/dates.ts";
 import { COUNTRY_CURRENCY } from "../format/money.ts";
@@ -22,17 +22,19 @@ const CHIP_CHECK = "hidden group-has-checked:inline";
 interface Props {
   initialValues: TripFormValues;
   initialErrors?: TripFormErrors;
+  isBare?: boolean;
   submit: { isPending: boolean; error: ApiError | null };
   onSubmit(values: TripFormValues): void;
   onGetIdeas(values: TripFormValues): void;
 }
 
 // The trip request form: checks the backend's rules locally, then hands valid values up
-export function TripForm({ initialValues, initialErrors = {}, submit, onSubmit, onGetIdeas }: Props) {
+export function TripForm({ initialValues, initialErrors = {}, isBare = false, submit, onSubmit, onGetIdeas }: Props) {
   const t = useT();
   const { lang } = useLanguage();
   const [values, setValues] = useState(initialValues);
   const [hasTried, setHasTried] = useState(false);
+  const [hintStyle, setHintStyle] = useState<TravelStyle | null>(null);
 
   const today = todayInVietnam();
   const errors = hasTried ? validateTripForm(values, today) : initialErrors;
@@ -46,12 +48,14 @@ export function TripForm({ initialValues, initialErrors = {}, submit, onSubmit, 
   const set = <K extends keyof TripFormValues>(key: K, value: TripFormValues[K]) =>
     setValues((prev) => ({ ...prev, [key]: value }));
 
-  // Add or remove one value of a multi-choice field
-  const toggle = <K extends "travel_styles" | "transport_modes">(key: K, item: TripFormValues[K][number]) =>
-    setValues((prev) => {
-      const list = prev[key] as string[];
-      return { ...prev, [key]: list.includes(item) ? list.filter((x) => x !== item) : [...list, item] };
-    });
+  // Add or remove one travel style
+  const toggleStyle = (style: TravelStyle) =>
+    setValues((prev) => ({
+      ...prev,
+      travel_styles: prev.travel_styles.includes(style)
+        ? prev.travel_styles.filter((x) => x !== style)
+        : [...prev.travel_styles, style],
+    }));
 
   // Validate everything; on errors move focus to the first broken field
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -81,7 +85,7 @@ export function TripForm({ initialValues, initialErrors = {}, submit, onSubmit, 
   };
 
   return (
-    <form className={`${CARD} flex flex-col gap-5`} onSubmit={handleSubmit} noValidate>
+    <form className={`${isBare ? "" : CARD} flex flex-col gap-5`} onSubmit={handleSubmit} noValidate>
       <div className={FIELD}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <label className={LABEL} htmlFor="trip-destination">
@@ -173,64 +177,48 @@ export function TripForm({ initialValues, initialErrors = {}, submit, onSubmit, 
           />
           {errorFor("travelers")}
         </div>
-        <div className={FIELD}>
-          <label className={LABEL} htmlFor="trip-group_type">
-            {t("form.groupType")}
-          </label>
-          <select
-            id="trip-group_type"
-            className={INPUT}
-            value={values.group_type}
-            onChange={(event) => set("group_type", event.target.value as TripFormValues["group_type"])}
-          >
-            {GROUP_TYPES.map((group) => (
-              <option key={group} value={group}>
-                {t(`group.${group}`)}
-              </option>
-            ))}
-          </select>
-        </div>
       </div>
 
       <fieldset className={FIELDSET} aria-describedby={errors.travel_styles ? "trip-travel_styles-error" : undefined}>
         <legend className={LEGEND}>{t("form.styles")}</legend>
         <div className="flex flex-wrap gap-2">
           {TRAVEL_STYLES.map((style, index) => (
-            <label key={style} className={CHIP}>
+            <label
+              key={style}
+              className={CHIP}
+              onPointerEnter={() => setHintStyle(style)}
+              onFocus={() => setHintStyle(style)}
+            >
               <input
                 id={index === 0 ? "trip-travel_styles" : undefined}
                 type="checkbox"
                 className="sr-only"
                 checked={values.travel_styles.includes(style)}
-                onChange={() => toggle("travel_styles", style)}
+                aria-describedby={`trip-style-${style}-hint`}
+                onChange={() => toggleStyle(style)}
               />
               <Check size={16} strokeWidth={1.75} aria-hidden="true" className={CHIP_CHECK} />
               {t(`style.${style}`)}
             </label>
           ))}
         </div>
-        {errorFor("travel_styles")}
-      </fieldset>
-
-      <fieldset className={FIELDSET} aria-describedby="trip-modes-help">
-        <legend className={LEGEND}>{t("form.modes")}</legend>
-        <div className="flex flex-wrap gap-2">
-          {TRANSPORT_MODES.map((mode) => (
-            <label key={mode} className={CHIP}>
-              <input
-                type="checkbox"
-                className="sr-only"
-                checked={values.transport_modes.includes(mode)}
-                onChange={() => toggle("transport_modes", mode)}
-              />
-              <Check size={16} strokeWidth={1.75} aria-hidden="true" className={CHIP_CHECK} />
-              {t(`mode.${mode}`)}
-            </label>
+        <div hidden>
+          {TRAVEL_STYLES.map((style) => (
+            <span key={style} id={`trip-style-${style}-hint`}>
+              {t(`styleHint.${style}`)}
+            </span>
           ))}
         </div>
-        <p id="trip-modes-help" className={HELP}>
-          {t("form.modesHelp")}
+        <p className={`${HELP} min-h-10`} aria-hidden="true">
+          {hintStyle ? (
+            <>
+              <span className="font-medium text-foreground">{t(`style.${hintStyle}`)}:</span> {t(`styleHint.${hintStyle}`)}
+            </>
+          ) : (
+            t("form.stylesHint")
+          )}
         </p>
+        {errorFor("travel_styles")}
       </fieldset>
 
       <div className={PAIR}>

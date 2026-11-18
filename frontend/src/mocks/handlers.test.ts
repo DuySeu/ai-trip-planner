@@ -19,15 +19,12 @@ function validBody() {
   const start = addDays(todayInVietnam(mockDb.now()), 7);
   return {
     user_id: MINH_ID,
-    conversation_id: null,
     destination: { name: dalat.name, country_code: dalat.country_code, lat: dalat.lat, lon: dalat.lon },
     origin: "Hà Nội",
     start_date: start,
     end_date: addDays(start, 3),
     travelers: 2,
-    group_type: "couple",
     travel_styles: ["nature"],
-    transport_modes: [],
     budget_amount: "5000000",
     budget_scope: "per_person",
     language: "en",
@@ -47,7 +44,7 @@ async function newConversation(): Promise<Conversation> {
 
 // Send a chat message and read the whole reply
 async function chat(conversationId: string, body: Record<string, unknown>) {
-  const response = await fetch(apiUrl(`/conversations/${conversationId}/messages`), post(body));
+  const response = await fetch(apiUrl("/chat"), post({ conversation_id: conversationId, ...body }));
   const events: ChatEvent[] = [];
   if (response.ok && response.body) {
     for await (const event of parseSse(response.body, new AbortController().signal)) events.push(event);

@@ -36,7 +36,10 @@ describe("NewTripPage", () => {
     await user.click(screen.getByRole("button", { name: "Plan this trip" }));
     await waitFor(() => expect(mockDb.trips.some((t) => t.destination_name === "Đà Lạt" && t.status === "queued")).toBe(true));
     const created = mockDb.trips.at(-1);
-    expect(created).toMatchObject({ budget_amount: "5000000.00", travel_styles: ["nature"], transport_modes: [], language: "en" });
+    expect(created).toMatchObject({ budget_amount: "5000000.00", travel_styles: ["nature"], language: "en" });
+    expect(created).not.toHaveProperty("group_type");
+    expect(created).not.toHaveProperty("transport_modes");
+    expect(created).not.toHaveProperty("conversation_id");
   });
 
   it("typing_after_picking_clears_the_destination", async () => {
@@ -59,6 +62,23 @@ describe("NewTripPage", () => {
     expect(box).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("hovering_a_travel_style_shows_its_description", async () => {
+    const { user } = renderApp("/trips/new");
+    const food = await screen.findByRole("checkbox", { name: "Food" });
+    expect(food).toHaveAccessibleDescription("Street food, markets, local specialties and well-known restaurants.");
+    expect(screen.getByText(/to see what it adds to the plan/)).toBeInTheDocument();
+    await user.hover(screen.getByText("Food"));
+    expect(screen.queryByText(/to see what it adds to the plan/)).toBeNull();
+    expect(screen.getByText("Food:").closest("p")).toHaveTextContent("Food: Street food, markets, local specialties and well-known restaurants.");
+    expect(screen.queryByRole("group", { name: "Transport" })).toBeNull();
+    expect(screen.queryByLabelText("Group")).toBeNull();
+  });
+
+  it("origin_defaults_to_ha_noi_when_the_draft_has_none", async () => {
+    renderApp("/trips/new");
+    expect(await screen.findByLabelText("Starting from")).toHaveValue("Hà Nội");
+  });
+
   it("prefills_from_conversation_draft_and_card_place", async () => {
     mockDb.conversations[0] = {
       ...(mockDb.conversations[0] as (typeof mockDb.conversations)[number]),
@@ -73,10 +93,11 @@ describe("NewTripPage", () => {
 
   it("get_ideas_creates_conversation_with_current_values", async () => {
     const { user } = renderApp("/trips/new");
-    await user.type(screen.getByLabelText("Starting from"), "Hà Nội");
+    await user.clear(screen.getByLabelText("Starting from"));
+    await user.type(screen.getByLabelText("Starting from"), "Huế");
     await user.click(screen.getByRole("button", { name: "Not sure where? Get ideas" }));
     await waitFor(() => expect(mockDb.conversations).toHaveLength(2));
-    expect(mockDb.conversations.at(-1)?.request_draft).toMatchObject({ origin: "Hà Nội", travelers: 2 });
+    expect(mockDb.conversations.at(-1)?.request_draft).toMatchObject({ origin: "Huế", travelers: 2 });
   });
 
   it("quota_429_shows_try_again_tomorrow", async () => {

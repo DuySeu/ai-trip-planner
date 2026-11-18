@@ -1,7 +1,6 @@
 // The API contract the client codes against. If the backend picks other field names,
 // only this file and src/mocks/fixtures.ts change.
 
-export const GROUP_TYPES = ["solo", "couple", "family", "friends", "colleagues"] as const;
 export const TRAVEL_STYLES = [
   "relax",
   "adventure",
@@ -17,7 +16,6 @@ export const TRANSPORT_MODES = ["flight", "train", "bus", "car", "motorbike", "b
 export const ACTIVE_STATUSES = ["queued", "researching", "planning"] as const;
 export const CHAT_EVENT_TYPES = ["token", "plan", "suggestions", "error", "done"] as const;
 
-export type GroupType = (typeof GROUP_TYPES)[number];
 export type TravelStyle = (typeof TRAVEL_STYLES)[number];
 export type TransportMode = (typeof TRANSPORT_MODES)[number];
 export type TripStatus = (typeof ACTIVE_STATUSES)[number] | "ready" | "failed";
@@ -177,7 +175,6 @@ export interface Source {
 export interface Trip {
   id: string;
   user_id: string;
-  conversation_id: string | null;
   destination_name: string;
   destination_country: string;
   destination_lat: number;
@@ -186,9 +183,7 @@ export interface Trip {
   start_date: string;
   end_date: string;
   travelers: number;
-  group_type: GroupType;
   travel_styles: TravelStyle[];
-  transport_modes: TransportMode[];
   budget_amount: string;
   budget_scope: BudgetScope;
   local_currency: string | null;
@@ -211,22 +206,19 @@ export type TripSummary = Omit<Trip, "plan" | "notes" | "origin" | "sources">;
 
 export interface CreateTripBody {
   user_id: string;
-  conversation_id: string | null;
   destination: { name: string; country_code: string; lat: number; lon: number };
   origin: string;
   start_date: string;
   end_date: string;
   travelers: number;
-  group_type: GroupType;
   travel_styles: TravelStyle[];
-  transport_modes: TransportMode[];
   budget_amount: string;
   budget_scope: BudgetScope;
   language: Language;
   notes: string | null;
 }
 
-export type RequestDraft = Partial<Omit<CreateTripBody, "user_id" | "conversation_id">> & {
+export type RequestDraft = Partial<Omit<CreateTripBody, "user_id">> & {
   month?: string | null;
   length_days?: number | null;
 };

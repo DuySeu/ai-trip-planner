@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PLACES } from "../mocks/fixtures.ts";
-import { fromDraft, type TripFormValues, toCreateTripBody, validateTripForm } from "./validateTripForm.ts";
+import { fromDraft, type TripFormValues, toCreateTripBody, toDraft, validateTripForm } from "./validateTripForm.ts";
 
 const TODAY = "2026-11-17";
 const valid: TripFormValues = {
@@ -9,9 +9,7 @@ const valid: TripFormValues = {
   start_date: "2026-12-01",
   end_date: "2026-12-04",
   travelers: 2,
-  group_type: "couple",
   travel_styles: ["nature"],
-  transport_modes: [],
   budget_amount: "5000000",
   budget_scope: "per_person",
   notes: "  ",
@@ -45,10 +43,20 @@ describe("validateTripForm", () => {
     expect(errors).toMatchObject({ budget_amount: "form.errors.budget", travelers: "form.errors.travelers" });
   });
 
-  it("to_create_trip_body_sends_empty_transport_modes_and_null_notes", () => {
-    const body = toCreateTripBody(valid, "u1", null, "vi");
-    expect(body).toMatchObject({ transport_modes: [], notes: null, origin: "Hà Nội", language: "vi" });
+  it("to_create_trip_body_sends_null_notes_and_no_removed_fields", () => {
+    const body = toCreateTripBody(valid, "u1", "vi");
+    expect(body).toMatchObject({ notes: null, origin: "Hà Nội", language: "vi" });
+    expect(body).not.toHaveProperty("group_type");
+    expect(body).not.toHaveProperty("transport_modes");
+    expect(body).not.toHaveProperty("conversation_id");
     expect(body.destination).toEqual({ name: "Đà Lạt", country_code: "VN", lat: 11.9404, lon: 108.4583 });
+  });
+
+  it("to_draft_leaves_out_blank_notes_and_the_removed_fields", () => {
+    const draft = toDraft(valid);
+    expect(draft).toMatchObject({ origin: "Hà Nội", travelers: 2, travel_styles: ["nature"] });
+    expect(draft).not.toHaveProperty("notes");
+    expect(draft).not.toHaveProperty("group_type");
   });
 
   it("from_draft_fills_end_date_from_length_days", () => {

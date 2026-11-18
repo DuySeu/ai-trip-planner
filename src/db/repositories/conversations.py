@@ -49,10 +49,20 @@ def get_conversation(conn: Connection[Any], conversation_id: UUID) -> Conversati
     return row
 
 
-# A user's conversations, most recently active first
-def list_conversations(conn: Connection[Any], user_id: UUID) -> list[ConversationRow]:
+# A user's conversations, most recently active first; no limit returns them all
+def list_conversations(
+    conn: Connection[Any], user_id: UUID, limit: int | None = None, offset: int = 0
+) -> list[ConversationRow]:
+    params = {"user_id": user_id, "limit": limit, "offset": offset}
     with conn.cursor(row_factory=class_row(ConversationRow)) as cur:
-        return cur.execute(QUERIES["list_conversations"], {"user_id": user_id}).fetchall()
+        return cur.execute(QUERIES["list_conversations"], params).fetchall()
+
+
+# How many conversations the user has
+def count_conversations(conn: Connection[Any], user_id: UUID) -> int:
+    row = conn.execute(QUERIES["count_conversations"], {"user_id": user_id}).fetchone()
+    assert row is not None
+    return int(row[0])
 
 
 # Replace the trip draft gathered so far
@@ -65,4 +75,27 @@ def save_draft(conn: Connection[Any], conversation_id: UUID, draft: Mapping[str,
 # Mark the conversation as active now
 def touch_conversation(conn: Connection[Any], conversation_id: UUID) -> None:
     if conn.execute(QUERIES["touch_conversation"], {"id": conversation_id}).rowcount == 0:
+        raise NotFound(f"conversation {conversation_id}")
+
+
+# Set the title without touching updated_at, so the list order stays
+def rename_conversation(
+    conn: Connection[Any], conversation_id: UUID, title: str
+) -> ConversationRow:
+    params = {"id": conversation_id, "title": title}
+    with conn.cursor(row_factory=class_row(ConversationRow)) as cur:
+        row = cur.execute(QUERIES["rename_conversation"], params).fetchone()
+    if row is None:
+        raise NotFound(f"conversation {conversation_id}")
+    return row
+
+
+# Give an untitled conversation its title; a titled one is left alone
+def set_title_if_missing(conn: Connection[Any], conversation_id: UUID, title: str) -> None:
+    conn.execute(QUERIES["set_title_if_missing"], {"id": conversation_id, "title": title})
+
+
+# Delete the conversation; its messages go with it and its trips keep a null conversation_id
+def delete_conversation(conn: Connection[Any], conversation_id: UUID) -> None:
+    if conn.execute(QUERIES["delete_conversation"], {"id": conversation_id}).rowcount == 0:
         raise NotFound(f"conversation {conversation_id}")

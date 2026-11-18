@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Union, Generator, List, Optional
+from collections.abc import Generator
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
 class Message:
     role: str
-    content: Union[str, List[Dict[str, Any]]]
+    content: str | list[dict[str, Any]]
 
 
 @dataclass
@@ -14,18 +15,18 @@ class LLMResponse:
     answer: str
     input_tokens: int
     output_tokens: int
-    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_calls: list[dict[str, Any]] | None = None
     original_response: Any = None
 
 
 @dataclass
 class StreamChunk:
-    text: Optional[str] = None
-    tool_call: Optional[Dict[str, Any]] = None
+    text: str | None = None
+    tool_call: dict[str, Any] | None = None
 
     # Standard chunk:
-    delta: Optional[str] = None
-    tool_call_chunk: Optional[Dict[str, Any]] = (
+    delta: str | None = None
+    tool_call_chunk: dict[str, Any] | None = (
         None  # {index, name, arguments_delta, id}
     )
 
@@ -40,17 +41,17 @@ class LLMProvider(ABC):
     @abstractmethod
     def invoke(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
-    ) -> Union[Dict[str, Any], LLMResponse]:
+        tools: list[dict] | None = None,
+    ) -> dict[str, Any] | LLMResponse:
         pass
 
     @abstractmethod
     def invoke_stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
     ) -> Generator:
         pass

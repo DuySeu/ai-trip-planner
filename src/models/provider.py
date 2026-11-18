@@ -1,10 +1,14 @@
+import json
+from collections.abc import Generator
+from typing import Any
+
 import boto3
 from openai import OpenAI
 from openrouter import OpenRouter
-import json
-from typing import List, Dict, Any, Generator, Optional
+
 from core.config import config
 from core.constants import region
+
 from .base import LLMProvider, LLMResponse, StreamChunk
 
 
@@ -30,7 +34,7 @@ class OpenAIProvider(LLMProvider):
             ]
         }
 
-    def _convert_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         openai_tools = []
         for tool in tools:
             if "input_schema" in tool:
@@ -51,9 +55,9 @@ class OpenAIProvider(LLMProvider):
 
     def invoke(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
     ) -> LLMResponse:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
@@ -92,9 +96,9 @@ class OpenAIProvider(LLMProvider):
 
     def invoke_stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
     ) -> Generator[StreamChunk, None, None]:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
@@ -130,9 +134,10 @@ class OpenAIProvider(LLMProvider):
 
 
 class OpenRouterProvider(LLMProvider):
-    def __init__(self, model_id: str, inference_config: dict):
+    def __init__(self, model_id: str, inference_config: dict, timeout_s: float | None = None):
         super().__init__(model_id, inference_config)
-        self.client = OpenRouter(api_key=config.OPENROUTER_API_KEY)
+        timeout_ms = None if timeout_s is None else round(timeout_s * 1000)
+        self.client = OpenRouter(api_key=config.OPENROUTER_API_KEY, timeout_ms=timeout_ms)
 
     def _get_openai_config(self):
         return {
@@ -149,7 +154,7 @@ class OpenRouterProvider(LLMProvider):
             ]
         }
 
-    def _convert_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         openai_tools = []
         for tool in tools:
             if "input_schema" in tool:
@@ -170,9 +175,9 @@ class OpenRouterProvider(LLMProvider):
 
     def invoke(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
     ) -> LLMResponse:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
@@ -212,9 +217,9 @@ class OpenRouterProvider(LLMProvider):
 
     def invoke_stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
     ) -> Generator[StreamChunk, None, None]:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
@@ -244,9 +249,7 @@ class OpenRouterProvider(LLMProvider):
                                 "index": tc.index,
                                 "id": tc.id,
                                 "name": tc.function.name if tc.function else None,
-                                "arguments": tc.function.arguments
-                                if tc.function
-                                else None,
+                                "arguments": tc.function.arguments if tc.function else None,
                             }
                         )
 
@@ -276,15 +279,13 @@ class BedrockProvider(LLMProvider):
                 aws_secret_access_key=credentials["SecretAccessKey"],
                 aws_session_token=credentials["SessionToken"],
             )
-        return self.session.client(
-            service_name=service_name, region_name=region.AP_SOUTHEAST_1
-        )
+        return self.session.client(service_name=service_name, region_name=region.AP_SOUTHEAST_1)
 
     def _prepare_payload(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
     ) -> dict:
         bedrock_messages = []
         for msg in messages:
@@ -317,9 +318,9 @@ class BedrockProvider(LLMProvider):
 
     def invoke(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
     ) -> LLMResponse:
         payload = self._prepare_payload(messages, system_prompt, tools)
         response = self.client.invoke_model(**payload)
@@ -352,9 +353,9 @@ class BedrockProvider(LLMProvider):
 
     def invoke_stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
     ) -> Generator[StreamChunk, None, None]:
         payload = self._prepare_payload(messages, system_prompt, tools)
         response = self.client.invoke_model_with_response_stream(**payload)

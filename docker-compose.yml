@@ -18,5 +18,33 @@ services:
       timeout: 3s
       retries: 30
 
+  # HTTP API; applies migrations first
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+    command: >
+      sh -c "python scripts/migrate.py &&
+             uvicorn api.main:app_factory --factory --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Background worker that runs plan jobs; migrate is idempotent and locked, so it is safe here too
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+    command: sh -c "python scripts/migrate.py && python -m service.worker.worker"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   db-data:

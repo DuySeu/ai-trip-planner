@@ -1,4 +1,4 @@
-from .config import config, Config
-from .constants import model, region, ModelId, Region
+from .config import Config, config
+from .constants import ModelId, Region, model, region
 
 __all__ = ["config", "Config", "model", "region", "ModelId", "Region"]

@@ -100,7 +100,7 @@ describe("ChatPanel", () => {
     mockDb.tokenGapMs = 50;
     let aborted = false;
     server.events.on("request:start", ({ request }) => {
-      if (request.url.includes("/messages")) request.signal.addEventListener("abort", () => (aborted = true));
+      if (new URL(request.url).pathname.endsWith("/chat")) request.signal.addEventListener("abort", () => (aborted = true));
     });
     const { user, unmount } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
     await screen.findByText(/three places that fit a cool/);

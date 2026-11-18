@@ -58,6 +58,22 @@ def recent_messages(conn: Connection[Any], conversation_id: UUID, limit: int) ->
         return cur.execute(QUERIES["recent_messages"], params).fetchall()
 
 
+# One page of messages, oldest first
+def list_messages(
+    conn: Connection[Any], conversation_id: UUID, limit: int, offset: int
+) -> list[MessageRow]:
+    params = {"conversation_id": conversation_id, "limit": limit, "offset": offset}
+    with conn.cursor(row_factory=class_row(MessageRow)) as cur:
+        return cur.execute(QUERIES["list_messages"], params).fetchall()
+
+
+# How many messages the conversation holds
+def count_messages(conn: Connection[Any], conversation_id: UUID) -> int:
+    row = conn.execute(QUERIES["count_messages"], {"conversation_id": conversation_id}).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
 # Messages the user sent since midnight in Vietnam, over all their conversations
 def count_user_messages_today(conn: Connection[Any], user_id: UUID) -> int:
     row = conn.execute(QUERIES["count_user_messages_today"], {"user_id": user_id}).fetchone()

@@ -5,6 +5,7 @@ import type { TripStatus, TripSummary } from "../api/api.types.ts";
 import { useDeleteTrip, useUserTrips } from "../api/trips.ts";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 import { EmptyState } from "../components/EmptyState.tsx";
+import { NewTripDialog } from "../components/NewTripDialog.tsx";
 import { formatDateRange } from "../format/dates.ts";
 import { formatMoney } from "../format/money.ts";
 import { errorKey } from "../i18n/errorKey.ts";
@@ -30,6 +31,7 @@ export function HomePage() {
   const session = useSession();
   const userId = session?.userId ?? "";
   const [pendingDelete, setPendingDelete] = useState<TripSummary | null>(null);
+  const [isNewTripOpen, setIsNewTripOpen] = useState(false);
   const trips = useUserTrips(userId);
   const deleteTrip = useDeleteTrip();
 
@@ -39,18 +41,18 @@ export function HomePage() {
     deleteTrip.mutate(pendingDelete.id, { onSuccess: () => setPendingDelete(null) });
   };
 
-  const newTripLink = (
-    <Link to="/trips/new" className={BUTTON.primary}>
+  const newTripButton = (
+    <button type="button" className={BUTTON.primary} onClick={() => setIsNewTripOpen(true)}>
       <Plus size={20} strokeWidth={1.75} aria-hidden="true" />
       {t("home.newTrip")}
-    </Link>
+    </button>
   );
 
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className={TITLE.page}>{t("home.title")}</h1>
-        {trips.data && trips.data.length > 0 && newTripLink}
+        {trips.data && trips.data.length > 0 && newTripButton}
       </header>
 
       {trips.isPending ? (
@@ -67,7 +69,7 @@ export function HomePage() {
           </button>
         </div>
       ) : trips.data.length === 0 ? (
-        <EmptyState icon={Luggage} text={t("home.empty")} action={newTripLink} />
+        <EmptyState icon={Luggage} text={t("home.empty")} action={newTripButton} />
       ) : (
         <ul className={GRID}>
           {trips.data.map((trip) => (
@@ -108,6 +110,8 @@ export function HomePage() {
           ))}
         </ul>
       )}
+
+      <NewTripDialog isOpen={isNewTripOpen} onClose={() => setIsNewTripOpen(false)} />
 
       <ConfirmDialog
         isOpen={pendingDelete !== null}

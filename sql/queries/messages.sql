@@ -23,3 +23,12 @@ WHERE c.user_id = %(user_id)s AND m.role = 'user'
 -- name: count_intent
 SELECT count(*) FROM messages
 WHERE conversation_id = %(conversation_id)s AND intent = %(intent)s;
+
+-- name: list_messages
+-- Oldest first, for paging through a conversation
+SELECT * FROM messages WHERE conversation_id = %(conversation_id)s
+ORDER BY created_at
+LIMIT %(limit)s OFFSET %(offset)s;
+
+-- name: count_messages
+SELECT count(*) FROM messages WHERE conversation_id = %(conversation_id)s;

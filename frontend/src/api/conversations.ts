@@ -72,15 +72,15 @@ export function useConversation(conversationId: string | null) {
   });
 }
 
-// POST /conversations/{id}/messages - the reply body as an SSE stream; errors before streaming throw ApiError
+// POST /chat - the reply body as an SSE stream; errors before streaming throw ApiError
 export async function sendMessage(
   conversationId: string,
   body: { content: string; trip_id: string | null; plan_revision: number | null },
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
-  const response = await send(`/conversations/${conversationId}/messages`, {
+  const response = await send("/chat", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify({ conversation_id: conversationId, ...body }),
     headers: { Accept: "text/event-stream" },
     signal,
   });

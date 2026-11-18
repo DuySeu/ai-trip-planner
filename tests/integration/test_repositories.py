@@ -41,6 +41,7 @@ from db.repositories.trips import (
     set_status,
 )
 from db.repositories.users import UserRow, claim_user, get_user
+from domain.trip_request import TripRequest
 
 REQUEST: dict[str, Any] = {
     "destination": {"name": "Bangkok", "country_code": "TH", "lat": 13.75, "lon": 100.5},
@@ -48,9 +49,7 @@ REQUEST: dict[str, Any] = {
     "start_date": "2026-12-20",
     "end_date": "2026-12-23",
     "travelers": 2,
-    "group_type": "couple",
     "travel_styles": ["food", "culture"],
-    "transport_modes": [],
     "budget_amount": "20000000",
     "budget_scope": "total",
     "language": "vi",
@@ -91,6 +90,12 @@ def test_create_trip_maps_request_to_columns(db_conn, user, trip):
     assert (trip.status, trip.plan, trip.plan_revision) == ("queued", None, 0)
     assert trip.expires_at - trip.created_at == timedelta(days=30)
     assert count_trips_today(db_conn, user.id) == 1
+
+
+def test_create_trip_accepts_trip_request_json_dump(db_conn, user):
+    request = TripRequest.model_validate(REQUEST)
+    row = create_trip(db_conn, user.id, request.model_dump(mode="json"), "THB", retention_days=30)
+    assert row.budget_amount == request.budget_amount and row.start_date == request.start_date
 
 
 def test_list_trips_newest_first_and_paged(db_conn, user, trip):

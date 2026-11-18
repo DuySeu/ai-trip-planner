@@ -4,7 +4,6 @@ import {
   type ChatEvent,
   type Conversation,
   type CreateTripBody,
-  GROUP_TYPES,
   type Message,
   type RequestDraft,
   TRAVEL_STYLES,
@@ -115,15 +114,20 @@ export const handlers = [
     if (!conversation) return notFound();
     mockDb.conversations = mockDb.conversations.filter((c) => c.id !== conversation.id);
     mockDb.messages = mockDb.messages.filter((m) => m.conversation_id !== conversation.id);
-    for (const trip of mockDb.trips) if (trip.conversation_id === conversation.id) trip.conversation_id = null;
     return new HttpResponse(null, { status: 204 });
   }),
 
-  // POST /conversations/:conversationId/messages - Send a message; the reply is an SSE stream
-  http.post(apiUrl("/conversations/:conversationId/messages"), async ({ params, request }) => {
-    const conversation = mockDb.conversations.find((c) => c.id === params.conversationId);
+  // POST /chat - Send a message to the conversation in the body; the reply is an SSE stream
+  http.post(apiUrl("/chat"), async ({ request }) => {
+    const body = (await request.json()) as {
+      conversation_id?: string;
+      content?: string;
+      trip_id?: string | null;
+      plan_revision?: number | null;
+    };
+    if (!body.conversation_id) return fail(422, "invalid_request", "conversation_id is required");
+    const conversation = mockDb.conversations.find((c) => c.id === body.conversation_id);
     if (!conversation) return notFound();
-    const body = (await request.json()) as { content?: string; trip_id?: string | null; plan_revision?: number | null };
     const content = (body.content ?? "").trim();
     if (content.length < 1 || content.length > MAX_MESSAGE) return fail(422, "invalid_request", "Message must be 1 to 4000 characters");
 
@@ -179,7 +183,6 @@ export const handlers = [
     const trip: MockTrip = {
       id: crypto.randomUUID(),
       user_id: body.user_id,
-      conversation_id: body.conversation_id,
       destination_name: body.destination.name,
       destination_country: country,
       destination_lat: body.destination.lat,
@@ -188,9 +191,7 @@ export const handlers = [
       start_date: body.start_date,
       end_date: body.end_date,
       travelers: body.travelers,
-      group_type: body.group_type,
       travel_styles: body.travel_styles,
-      transport_modes: body.transport_modes,
       budget_amount: Number(body.budget_amount).toFixed(2),
       budget_scope: body.budget_scope,
       local_currency: country === "VN" ? null : (COUNTRY_CURRENCY[country] ?? null),
@@ -316,7 +317,6 @@ function firstBrokenRule(body: CreateTripBody): string | null {
   if (!body.end_date || body.end_date < body.start_date) return "The end date is before the start date";
   if (tripDays(body.start_date, body.end_date) > MAX_TRIP_DAYS) return "A trip can be at most 30 days";
   if (!Number.isInteger(body.travelers) || body.travelers < 1 || body.travelers > MAX_TRAVELERS) return "Travelers must be 1 to 50";
-  if (!GROUP_TYPES.includes(body.group_type)) return "Unknown group type";
   if (body.travel_styles.length === 0 || !body.travel_styles.every((s) => TRAVEL_STYLES.includes(s))) {
     return "Pick at least one travel style";
   }
@@ -331,7 +331,6 @@ function discoveryDraft(draft: RequestDraft | null): RequestDraft {
   return {
     origin: "Hồ Chí Minh",
     travelers: 4,
-    group_type: "friends",
     travel_styles: ["nature", "food"],
     budget_amount: "5000000",
     budget_scope: "per_person",

@@ -21,9 +21,7 @@ TRIP_DEFAULTS: dict[str, Any] = {
     "start_date": date(2026, 12, 20),
     "end_date": date(2026, 12, 23),
     "travelers": 4,
-    "group_type": "friends",
     "travel_styles": ["nature"],
-    "transport_modes": [],
     "budget_amount": 5_000_000,
     "budget_scope": "per_person",
     "local_currency": None,
@@ -59,7 +57,7 @@ def count(conn: psycopg.Connection, table: str) -> int:
 
 def test_migrate_is_idempotent(db_conn):
     assert apply_migrations(db_conn, MIGRATIONS) == []
-    assert count(db_conn, "schema_migrations") == 1
+    assert count(db_conn, "schema_migrations") == len(list(MIGRATIONS.glob("*.sql")))
 
 
 def test_user_names_unique_ignoring_case_and_spaces(db_conn):
@@ -111,10 +109,14 @@ def test_trip_rejects_unknown_style_and_empty_styles(db_conn):
         insert_trip(db_conn, user, travel_styles=[])
 
 
-def test_trip_rejects_unknown_transport_mode(db_conn):
-    user = insert_user(db_conn, "a")
-    with pytest.raises(psycopg.errors.CheckViolation):
-        insert_trip(db_conn, user, transport_modes=["any"])
+def test_trips_have_no_group_transport_or_conversation_column(db_conn):
+    columns = {
+        row[0]
+        for row in db_conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'trips'"
+        ).fetchall()
+    }
+    assert not columns & {"group_type", "transport_modes", "conversation_id"}
 
 
 def test_only_one_active_job_per_trip(db_conn):
@@ -235,15 +237,3 @@ def test_deleting_user_cascades_to_conversations_and_messages(db_conn):
 
     assert count(db_conn, "conversations") == 0
     assert count(db_conn, "messages") == 0
-
-
-def test_deleting_conversation_keeps_trip_made_from_it(db_conn):
-    user = insert_user(db_conn, "a")
-    conversation = db_conn.execute(
-        "INSERT INTO conversations (user_id) VALUES (%s) RETURNING id", (user,)
-    ).fetchone()[0]
-    trip = insert_trip(db_conn, user, conversation_id=conversation)
-    db_conn.execute("DELETE FROM conversations WHERE id = %s", (conversation,))
-    assert db_conn.execute(
-        "SELECT conversation_id FROM trips WHERE id = %s", (trip,)
-    ).fetchone() == (None,)

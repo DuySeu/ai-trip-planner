@@ -1,0 +1,20 @@
+{
+  "result": "success",
+  "provider": "https://www.exchangerate-api.com",
+  "documentation": "https://www.exchangerate-api.com/docs/free",
+  "terms_of_use": "https://www.exchangerate-api.com/terms",
+  "time_last_update_unix": 1794873751,
+  "time_last_update_utc": "Tue, 17 Nov 2026 00:02:31 +0000",
+  "time_next_update_unix": 1794960861,
+  "time_next_update_utc": "Wed, 18 Nov 2026 00:14:21 +0000",
+  "time_eol_unix": 0,
+  "base_code": "THB",
+  "rates": {
+    "VND": 760.015725,
+    "THB": 1,
+    "USD": 0.02951,
+    "EUR": 0.026812,
+    "JPY": 4.709585,
+    "KRW": 39.404888
+  }
+}

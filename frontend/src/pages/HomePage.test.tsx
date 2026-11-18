@@ -36,7 +36,18 @@ describe("HomePage", () => {
     );
     renderApp("/");
     expect(await within(screen.getByRole("main")).findByText("No trips yet. Plan your first one.")).toBeInTheDocument();
-    expect(within(screen.getByRole("main")).getByRole("link", { name: "New trip" })).toHaveAttribute("href", "/trips/new");
+    expect(within(screen.getByRole("main")).getByRole("button", { name: "New trip" })).toBeInTheDocument();
+  });
+
+  it("new_trip_opens_the_form_in_a_dialog_with_origin_ha_noi", async () => {
+    const { user } = renderApp("/");
+    await tripCards();
+    await user.click(screen.getByRole("button", { name: "New trip" }));
+    const dialog = screen.getByRole("dialog", { name: "Plan a new trip" });
+    expect(within(dialog).getByLabelText("Starting from")).toHaveValue("Hà Nội");
+    expect(screen.getByRole("heading", { name: "My trips" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "Plan a new trip" })).toBeNull();
   });
 
   it("delete_asks_for_confirmation_then_removes_the_card", async () => {

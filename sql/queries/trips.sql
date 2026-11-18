@@ -1,13 +1,13 @@
 -- name: create_trip
 INSERT INTO trips (
-    user_id, conversation_id, destination_name, destination_country, destination_lat,
-    destination_lon, origin, start_date, end_date, travelers, group_type, travel_styles,
-    transport_modes, budget_amount, budget_scope, local_currency, language, notes, status,
+    user_id, destination_name, destination_country, destination_lat,
+    destination_lon, origin, start_date, end_date, travelers, travel_styles,
+    budget_amount, budget_scope, local_currency, language, notes, status,
     expires_at
 ) VALUES (
-    %(user_id)s, %(conversation_id)s, %(destination_name)s, %(destination_country)s,
+    %(user_id)s, %(destination_name)s, %(destination_country)s,
     %(destination_lat)s, %(destination_lon)s, %(origin)s, %(start_date)s, %(end_date)s,
-    %(travelers)s, %(group_type)s, %(travel_styles)s, %(transport_modes)s, %(budget_amount)s,
+    %(travelers)s, %(travel_styles)s, %(budget_amount)s,
     %(budget_scope)s, %(local_currency)s, %(language)s, %(notes)s, 'queued',
     now() + make_interval(days => %(retention_days)s)
 )
@@ -20,6 +20,9 @@ SELECT * FROM trips WHERE id = %(id)s;
 SELECT * FROM trips WHERE user_id = %(user_id)s
 ORDER BY created_at DESC
 LIMIT %(limit)s OFFSET %(offset)s;
+
+-- name: count_trips
+SELECT count(*) FROM trips WHERE user_id = %(user_id)s;
 
 -- name: set_status
 UPDATE trips SET status = %(status)s, failure_reason = %(failure_reason)s, updated_at = now()
@@ -66,12 +69,14 @@ UPDATE trips SET
     start_date = %(start_date)s,
     end_date = %(end_date)s,
     travelers = %(travelers)s,
-    group_type = %(group_type)s,
     travel_styles = %(travel_styles)s,
-    transport_modes = %(transport_modes)s,
     budget_amount = %(budget_amount)s,
     budget_scope = %(budget_scope)s,
     language = %(language)s,
     notes = %(notes)s
 WHERE id = %(id)s AND plan_revision = %(base_revision)s
 RETURNING *;
+
+-- name: delete_expired_trips
+-- Jobs and research rows go with the trip (cascade); llm_calls keep their rows with a null trip
+DELETE FROM trips WHERE expires_at < %(now)s;

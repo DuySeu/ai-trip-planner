@@ -19,3 +19,7 @@ RETURNING *;
 
 -- name: sources_for_trip
 SELECT * FROM research_results WHERE trip_id = %(trip_id)s ORDER BY id;
+
+-- name: delete_expired_cache
+-- research_results.cache_key goes to NULL for the rows deleted here
+DELETE FROM search_cache WHERE expires_at < %(now)s;
