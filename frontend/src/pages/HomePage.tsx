@@ -77,13 +77,13 @@ export function HomePage() {
               <div className="flex items-start justify-between gap-2">
                 <h2 className={TITLE.section}>
                   <Link to={`/trips/${trip.id}`} className="text-card-foreground no-underline wrap-anywhere after:absolute after:inset-0 after:rounded-md focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-ring">
-                    {trip.destination_name}
+                    {trip.destination.name}
                   </Link>
                 </h2>
                 <button
                   type="button"
                   className={`${BUTTON.icon} relative z-[1] -mt-2 -mr-2 text-muted-foreground hover:text-destructive`}
-                  aria-label={t("home.deleteTrip", { destination: trip.destination_name })}
+                  aria-label={t("home.deleteTrip", { destination: trip.destination.name })}
                   onClick={() => setPendingDelete(trip)}
                 >
                   <Trash size={20} strokeWidth={1.75} />
@@ -115,7 +115,7 @@ export function HomePage() {
 
       <ConfirmDialog
         isOpen={pendingDelete !== null}
-        title={t("home.deleteTitle", { destination: pendingDelete?.destination_name ?? "" })}
+        title={t("home.deleteTitle", { destination: pendingDelete?.destination.name ?? "" })}
         body={deleteTrip.isError ? t(errorKey(deleteTrip.error)) : t("home.deleteBody")}
         confirmLabel={t("home.deleteConfirm")}
         isBusy={deleteTrip.isPending}

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ACTIVE_STATUSES, type CreateTripBody, type Trip, type TripSummary } from "./api.types.ts";
+import { ACTIVE_STATUSES, type CreateTripBody, type Trip, type TripCreated, type TripSummary } from "./api.types.ts";
 import { apiRequest } from "./client.ts";
 
 const LIST_LIMIT = 50;
@@ -37,16 +37,13 @@ export function useDeleteTrip() {
   });
 }
 
-// POST /trips - create a trip; generation starts in the background
+// POST /trips - create a trip; generation starts in the background and the trip page polls it
 export function useCreateTrip() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (body: CreateTripBody) =>
-      (await apiRequest<Trip>("/trips", { method: "POST", body: JSON.stringify(body) })).data,
-    onSuccess: (trip) => {
-      queryClient.setQueryData(tripKeys.detail(trip.id), trip);
-      queryClient.invalidateQueries({ queryKey: tripKeys.list(trip.user_id) });
-    },
+      (await apiRequest<TripCreated>("/trips", { method: "POST", body: JSON.stringify(body) })).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [...tripKeys.all, "list"] }),
   });
 }
 
@@ -65,10 +62,12 @@ export function useRetryTrip() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (tripId: string) =>
-      (await apiRequest<Trip>(`/trips/${tripId}/retry`, { method: "POST" })).data,
-    onSuccess: (trip) => {
-      queryClient.setQueryData(tripKeys.detail(trip.id), trip);
-      queryClient.invalidateQueries({ queryKey: tripKeys.list(trip.user_id) });
-    },
+      (await apiRequest<TripCreated>(`/trips/${tripId}/retry`, { method: "POST" })).data,
+    // The reply holds only the new status; refetch the trip so polling starts, and the lists for their badge
+    onSuccess: ({ id }) =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: tripKeys.detail(id) }),
+        queryClient.invalidateQueries({ queryKey: [...tripKeys.all, "list"] }),
+      ]),
   });
 }

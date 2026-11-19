@@ -66,8 +66,14 @@ export interface User {
 export interface Place {
   name: string;
   country_code: string;
-  country: string;
   admin1: string | null;
+  lat: number;
+  lon: number;
+}
+
+export interface Destination {
+  name: string;
+  country_code: string;
   lat: number;
   lon: number;
 }
@@ -167,18 +173,9 @@ export interface Plan {
   warnings: PlanWarning[];
 }
 
-export interface Source {
-  title: string;
-  url: string | null;
-}
-
 export interface Trip {
   id: string;
-  user_id: string;
-  destination_name: string;
-  destination_country: string;
-  destination_lat: number;
-  destination_lon: number;
+  destination: Destination;
   origin: string;
   start_date: string;
   end_date: string;
@@ -196,17 +193,26 @@ export interface Trip {
   total_cost_vnd: string | null;
   over_budget: boolean | null;
   plan_revision: number;
-  sources: Record<string, Source>;
   created_at: string;
   updated_at: string;
+  expires_at: string;
 }
 
-// Lists leave out the heavy fields; sources only make sense next to a plan
-export type TripSummary = Omit<Trip, "plan" | "notes" | "origin" | "sources">;
+// One row of GET /users/{id}/trips
+export type TripSummary = Pick<
+  Trip,
+  "id" | "destination" | "start_date" | "end_date" | "travelers" | "status" | "total_cost_vnd" | "over_budget" | "created_at" | "updated_at"
+>;
+
+// What POST /trips and POST /trips/{id}/retry return: where to poll
+export interface TripCreated {
+  id: string;
+  status: TripStatus;
+}
 
 export interface CreateTripBody {
   user_id: string;
-  destination: { name: string; country_code: string; lat: number; lon: number };
+  destination: Destination;
   origin: string;
   start_date: string;
   end_date: string;

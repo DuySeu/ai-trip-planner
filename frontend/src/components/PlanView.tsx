@@ -27,7 +27,6 @@ export function PlanView({ trip }: Props) {
   const { plan } = trip;
   const { currencies } = plan;
 
-  const sourceUrl = (id: number | null) => (id === null ? null : (trip.sources[String(id)]?.url ?? null));
   const budgetTotal = Number(trip.budget_amount) * (trip.budget_scope === "per_person" ? trip.travelers : 1);
   const overBy = Number(trip.total_cost_vnd ?? 0) - budgetTotal;
   const stays = plan.accommodation.toSorted((a, b) => Number(b.chosen) - Number(a.chosen));
@@ -40,7 +39,7 @@ export function PlanView({ trip }: Props) {
         <ul className="flex flex-wrap gap-x-5 gap-y-2 text-sm [&_li]:inline-flex [&_li]:items-center [&_li]:gap-2 [&_svg]:text-muted-foreground">
           <li>
             <MapPin size={16} strokeWidth={1.75} aria-hidden="true" />
-            {trip.destination_name}
+            {trip.destination.name}
           </li>
           <li className="tabular-nums">
             <CalendarDays size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -144,7 +143,7 @@ export function PlanView({ trip }: Props) {
                             amount={String(item.price_per_person)}
                             currency={item.price_currency}
                             basis={item.price_basis}
-                            sourceUrl={sourceUrl(item.source_id)}
+                            sourceUrl={null}
                             currencies={currencies}
                           />
                         </div>
@@ -161,7 +160,7 @@ export function PlanView({ trip }: Props) {
         <h2 id="plan-transport" className={TITLE.section}>
           {t("plan.transport")}
         </h2>
-        <TransportOptions options={plan.transport_options} currencies={currencies} sources={trip.sources} />
+        <TransportOptions options={plan.transport_options} currencies={currencies} />
       </section>
 
       {stays.length > 0 && (
@@ -186,7 +185,7 @@ export function PlanView({ trip }: Props) {
                     amount={String(stay.price_per_night)}
                     currency={stay.price_currency}
                     basis={stay.price_basis}
-                    sourceUrl={sourceUrl(stay.source_id)}
+                    sourceUrl={null}
                     currencies={currencies}
                   />
                   <span className={MUTED_SMALL}>{t("plan.perNight")}</span>

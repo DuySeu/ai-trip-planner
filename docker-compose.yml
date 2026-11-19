@@ -25,6 +25,7 @@ services:
     environment:
       DB_HOST: db
       DB_PORT: "5432"
+      CORS_ORIGINS: http://localhost:8080
     command: >
       sh -c "python scripts/migrate.py &&
              uvicorn api.main:app_factory --factory --host 0.0.0.0 --port 8000"
@@ -45,6 +46,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  # Static frontend on nginx; the browser calls the API directly on port 8000
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
 
 volumes:
   db-data:

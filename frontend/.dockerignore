@@ -1,0 +1,4 @@
+node_modules
+dist
+# Dev settings (VITE_API_MOCK=true) must not reach the production bundle
+.env

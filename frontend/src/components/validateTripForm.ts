@@ -77,9 +77,7 @@ export function toCreateTripBody(
 // Form values from a conversation's draft plus a picked place; a month alone leaves the dates empty
 export function fromDraft(draft: RequestDraft | null, place: Place | null): TripFormValues {
   const d = draft ?? {};
-  const fromDraftPlace: Place | null = d.destination
-    ? { ...d.destination, country: d.destination.country_code, admin1: null }
-    : null;
+  const fromDraftPlace: Place | null = d.destination ? { ...d.destination, admin1: null } : null;
   const start = d.start_date ?? "";
   const end = d.end_date ?? (start && d.length_days ? addDays(start, d.length_days - 1) : "");
   return {

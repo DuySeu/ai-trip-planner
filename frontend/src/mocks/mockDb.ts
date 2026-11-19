@@ -8,7 +8,6 @@ import {
   planAbroad,
   planDomestic,
   SEED_CONVERSATION_ID,
-  SOURCES,
   SUGGESTION_CARDS,
 } from "./fixtures.ts";
 
@@ -19,12 +18,14 @@ const STAGES = [
   { status: "planning", until: 10000 },
 ] as const;
 const DEFAULT_TOKEN_GAP_MS = 30;
+const RETENTION_MS = 30 * 86_400_000;
 
 // Head start that puts a re-plan straight into researching
 export const REPLAN_HEAD_START_MS = 2000;
 
-// A stored trip plus the start time of its running job
+// A stored trip plus its owner and the start time of its running job
 export interface MockTrip extends Trip {
+  user_id: string;
   job_started_at: number | null;
 }
 
@@ -92,8 +93,8 @@ export const mockDb = {
       total_cost_vnd: null,
       over_budget: null,
       plan_revision: 0,
-      sources: {},
       updated_at: iso,
+      expires_at: new Date(now().getTime() + RETENTION_MS).toISOString(),
       job_started_at: null,
     };
     const domesticStart = addDays(today, 14);
@@ -104,10 +105,7 @@ export const mockDb = {
         {
           ...seed,
           id: DOMESTIC_TRIP_ID,
-          destination_name: "Đà Lạt",
-          destination_country: "VN",
-          destination_lat: 11.9404,
-          destination_lon: 108.4583,
+          destination: { name: "Đà Lạt", country_code: "VN", lat: 11.9404, lon: 108.4583 },
           start_date: domesticStart,
           end_date: addDays(domesticStart, 3),
           travelers: 4,
@@ -124,10 +122,7 @@ export const mockDb = {
         {
           ...seed,
           id: ABROAD_TRIP_ID,
-          destination_name: "Bangkok",
-          destination_country: "TH",
-          destination_lat: 13.7563,
-          destination_lon: 100.5018,
+          destination: { name: "Bangkok", country_code: "TH", lat: 13.7563, lon: 100.5018 },
           start_date: abroadStart,
           end_date: addDays(abroadStart, 3),
           travelers: 2,
@@ -143,10 +138,7 @@ export const mockDb = {
       {
         ...seed,
         id: FAILED_TRIP_ID,
-        destination_name: "Hội An",
-        destination_country: "VN",
-        destination_lat: 15.8801,
-        destination_lon: 108.338,
+        destination: { name: "Hội An", country_code: "VN", lat: 15.8801, lon: 108.338 },
         start_date: failedStart,
         end_date: addDays(failedStart, 2),
         travelers: 2,
@@ -204,13 +196,13 @@ export const mockDb = {
       return trip;
     }
     const days = tripDays(trip.start_date, trip.end_date);
-    const plan = trip.destination_country === "VN" ? planDomestic(trip.start_date, days) : planAbroad(trip.start_date, days);
+    const plan = trip.destination.country_code === "VN" ? planDomestic(trip.start_date, days) : planAbroad(trip.start_date, days);
     Object.assign(trip, withPlan(trip, plan));
     return trip;
   },
 };
 
-// Put a plan on a trip with its totals, the budget check, its sources and a new revision
+// Put a plan on a trip with its totals, the budget check and a new revision
 export function withPlan<T extends Trip>(trip: T, plan: Plan): T {
   const total = planTotalVnd(plan, trip.travelers);
   const budget = Number(trip.budget_amount) * (trip.budget_scope === "per_person" ? trip.travelers : 1);
@@ -228,7 +220,6 @@ export function withPlan<T extends Trip>(trip: T, plan: Plan): T {
     total_cost_vnd: total.toFixed(2),
     over_budget: isOver,
     plan_revision: trip.plan_revision + 1,
-    sources: Object.fromEntries(Object.entries(SOURCES)),
   };
 }
 

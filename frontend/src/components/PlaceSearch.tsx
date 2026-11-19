@@ -3,7 +3,8 @@ import { type KeyboardEvent, useEffect, useState } from "react";
 import type { Place } from "../api/api.types.ts";
 import { usePlaceSearch } from "../api/places.ts";
 import { errorKey } from "../i18n/errorKey.ts";
-import { useT } from "../i18n/LanguageProvider.tsx";
+import { locale } from "../format/dates.ts";
+import { useLanguage, useT } from "../i18n/LanguageProvider.tsx";
 import { INPUT } from "../styles/recipes.ts";
 
 const DEBOUNCE_MS = 300;
@@ -21,11 +22,13 @@ interface Props {
 // Combobox over GET /places; typing after a pick clears the value, so free text can never be submitted
 export function PlaceSearch({ inputId, value, isInvalid, describedBy, onChange }: Props) {
   const t = useT();
+  const { lang } = useLanguage();
   const [text, setText] = useState(value?.name ?? "");
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const search = usePlaceSearch(query);
+  const search = usePlaceSearch(query, lang);
+  const regions = new Intl.DisplayNames([locale(lang)], { type: "region" });
 
   const listId = `${inputId}-list`;
   const places = search.data ?? [];
@@ -109,7 +112,7 @@ export function PlaceSearch({ inputId, value, isInvalid, describedBy, onChange }
             >
               <span className="text-base/5">{place.name}</span>
               <span className="text-sm text-muted-foreground">
-                {[place.admin1 !== place.name ? place.admin1 : null, place.country].filter(Boolean).join(", ")}
+                {[place.admin1 !== place.name ? place.admin1 : null, regions.of(place.country_code) ?? place.country_code].filter(Boolean).join(", ")}
               </span>
             </li>
           ))

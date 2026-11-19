@@ -34,7 +34,7 @@ describe("NewTripPage", () => {
     await fillRequired(user);
     expect(screen.getByLabelText("Budget (VND)")).toHaveValue("5,000,000");
     await user.click(screen.getByRole("button", { name: "Plan this trip" }));
-    await waitFor(() => expect(mockDb.trips.some((t) => t.destination_name === "Đà Lạt" && t.status === "queued")).toBe(true));
+    await waitFor(() => expect(mockDb.trips.some((t) => t.destination.name === "Đà Lạt" && t.status === "queued")).toBe(true));
     const created = mockDb.trips.at(-1);
     expect(created).toMatchObject({ budget_amount: "5000000.00", travel_styles: ["nature"], language: "en" });
     expect(created).not.toHaveProperty("group_type");
@@ -50,6 +50,21 @@ describe("NewTripPage", () => {
     await user.click(screen.getByRole("button", { name: "Plan this trip" }));
     expect(await screen.findByText("Pick the destination from the search.")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Destination" })).toHaveFocus();
+  });
+
+  it("place_search_sends_ui_language_and_names_the_country_from_its_code", async () => {
+    let language: string | null = null;
+    server.use(
+      http.get(apiUrl("/places"), ({ request }) => {
+        language = new URL(request.url).searchParams.get("language");
+        return HttpResponse.json({ success: true, data: [BANGKOK], error: null, meta: null });
+      }),
+    );
+    const { user } = renderApp("/trips/new", { lang: "vi" });
+    await user.type(screen.getByRole("combobox"), "ba");
+    const option = await screen.findByRole("option", { name: /Bangkok/ }, { timeout: 2000 });
+    expect(option).toHaveTextContent("Thái Lan");
+    expect(language).toBe("vi");
   });
 
   it("keyboard_picks_a_place_with_arrow_and_enter", async () => {

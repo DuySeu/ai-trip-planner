@@ -8,6 +8,8 @@ import {
   type RequestDraft,
   TRAVEL_STYLES,
   type Trip,
+  type TripCreated,
+  type TripSummary,
   type User,
 } from "../api/api.types.ts";
 import { apiUrl } from "../api/client.ts";
@@ -24,6 +26,7 @@ const MAX_NOTES = 2000;
 const MAX_MESSAGE = 4000;
 const MAX_TITLE = 80;
 const MAX_PLACES = 10;
+const RETENTION_MS = 30 * 86_400_000;
 const TITLE_LENGTH = 80;
 const DEFAULT_LIMIT = 50;
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -56,7 +59,18 @@ export const handlers = [
       .filter((t) => t.user_id === params.userId)
       .map((t) => mockDb.advance(t))
       .toSorted((a, b) => b.created_at.localeCompare(a.created_at))
-      .map(({ plan: _p, notes: _n, origin: _o, sources: _s, job_started_at: _j, ...summary }) => summary);
+      .map((t): TripSummary => ({
+        id: t.id,
+        destination: t.destination,
+        start_date: t.start_date,
+        end_date: t.end_date,
+        travelers: t.travelers,
+        status: t.status,
+        total_cost_vnd: t.total_cost_vnd,
+        over_budget: t.over_budget,
+        created_at: t.created_at,
+        updated_at: t.updated_at,
+      }));
     return page(trips, request);
   }),
 
@@ -183,10 +197,7 @@ export const handlers = [
     const trip: MockTrip = {
       id: crypto.randomUUID(),
       user_id: body.user_id,
-      destination_name: body.destination.name,
-      destination_country: country,
-      destination_lat: body.destination.lat,
-      destination_lon: body.destination.lon,
+      destination: body.destination,
       origin: body.origin.trim(),
       start_date: body.start_date,
       end_date: body.end_date,
@@ -204,14 +215,14 @@ export const handlers = [
       total_cost_vnd: null,
       over_budget: null,
       plan_revision: 0,
-      sources: {},
       created_at: iso,
       updated_at: iso,
+      expires_at: new Date(mockDb.now().getTime() + RETENTION_MS).toISOString(),
       job_started_at: null,
     };
     mockDb.trips.push(trip);
     mockDb.startJob(trip);
-    return ok(publicTrip(trip), 202);
+    return ok({ id: trip.id, status: trip.status } satisfies TripCreated, 202);
   }),
 
   // GET /trips/:tripId - Trip, status, stage and current plan
@@ -228,7 +239,7 @@ export const handlers = [
     const blocked = quotaBlocked();
     if (blocked) return blocked;
     mockDb.startJob(trip);
-    return ok(publicTrip(trip), 202);
+    return ok({ id: trip.id, status: "queued" } satisfies TripCreated, 202);
   }),
 
   // DELETE /trips/:tripId - Delete a trip
@@ -243,8 +254,8 @@ export const handlers = [
     const trip = mockDb.trips.find((t) => t.id === params.tripId);
     if (!trip) return notFound();
     if (mockDb.advance(trip).plan === null) return fail(409, "conflict", "The trip has no plan yet");
-    const filename = fold(trip.destination_name).replace(/[^a-z0-9 _-]/g, "").trim() || "trip";
-    return new HttpResponse(new Blob([`Mock export: ${trip.destination_name}`], { type: XLSX }), {
+    const filename = fold(trip.destination.name).replace(/[^a-z0-9 _-]/g, "").trim() || "trip";
+    return new HttpResponse(new Blob([`Mock export: ${trip.destination.name}`], { type: XLSX }), {
       headers: { "Content-Type": XLSX, "Content-Disposition": `attachment; filename="${filename}.xlsx"` },
     });
   }),
@@ -287,7 +298,7 @@ function quotaBlocked() {
 }
 
 // A trip as the API returns it
-function publicTrip({ job_started_at: _j, ...trip }: MockTrip): Trip {
+function publicTrip({ job_started_at: _j, user_id: _u, ...trip }: MockTrip): Trip {
   return trip;
 }
 

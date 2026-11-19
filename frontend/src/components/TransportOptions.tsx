@@ -1,4 +1,4 @@
-import type { Leg, Plan, Source, TransportOption } from "../api/api.types.ts";
+import type { Leg, Plan, TransportOption } from "../api/api.types.ts";
 import { formatDay } from "../format/dates.ts";
 import { useLanguage, useT } from "../i18n/LanguageProvider.tsx";
 import { categoryIcon } from "./categoryIcon.ts";
@@ -11,11 +11,10 @@ const MINUTES_PER_HOUR = 60;
 interface Props {
   options: TransportOption[];
   currencies: Plan["currencies"];
-  sources: Record<string, Source>;
 }
 
 // The ways there, back and around, grouped by leg; the chosen one is marked, switching happens in chat
-export function TransportOptions({ options, currencies, sources }: Props) {
+export function TransportOptions({ options, currencies }: Props) {
   const t = useT();
   const { lang } = useLanguage();
   const byLeg = Object.groupBy(options, (option) => option.leg);
@@ -67,7 +66,7 @@ export function TransportOptions({ options, currencies, sources }: Props) {
                         amount={String(option.price_per_person)}
                         currency={option.price_currency}
                         basis={option.price_basis}
-                        sourceUrl={option.source_id === null ? null : (sources[String(option.source_id)]?.url ?? null)}
+                        sourceUrl={null}
                         currencies={currencies}
                       />
                     </div>

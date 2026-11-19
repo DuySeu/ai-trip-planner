@@ -22,7 +22,6 @@ function queuedTrip(notes: string | null = null): MockTrip {
     total_cost_vnd: null,
     over_budget: null,
     plan_revision: 0,
-    sources: {},
   };
   mockDb.trips.push(trip);
   mockDb.startJob(trip);

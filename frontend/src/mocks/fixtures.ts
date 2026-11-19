@@ -5,7 +5,6 @@ import type {
   Plan,
   PlanDay,
   PriceBasis,
-  Source,
   SuggestionCard,
   TransportMode,
 } from "../api/api.types.ts";
@@ -20,29 +19,20 @@ export const THB_RATE = 720.5;
 export const RATE_DATE = "2026-11-16";
 
 export const PLACES: Place[] = [
-  { name: "Hà Nội", country_code: "VN", country: "Vietnam", admin1: "Hà Nội", lat: 21.0245, lon: 105.8412 },
-  { name: "Hồ Chí Minh", country_code: "VN", country: "Vietnam", admin1: "Hồ Chí Minh", lat: 10.8231, lon: 106.6297 },
-  { name: "Đà Nẵng", country_code: "VN", country: "Vietnam", admin1: "Đà Nẵng", lat: 16.0678, lon: 108.2208 },
-  { name: "Đà Lạt", country_code: "VN", country: "Vietnam", admin1: "Lâm Đồng", lat: 11.9404, lon: 108.4583 },
-  { name: "Hội An", country_code: "VN", country: "Vietnam", admin1: "Quảng Nam", lat: 15.8801, lon: 108.338 },
-  { name: "Phú Quốc", country_code: "VN", country: "Vietnam", admin1: "Kiên Giang", lat: 10.2899, lon: 103.984 },
-  { name: "Sa Pa", country_code: "VN", country: "Vietnam", admin1: "Lào Cai", lat: 22.3364, lon: 103.8438 },
-  { name: "Bangkok", country_code: "TH", country: "Thailand", admin1: "Bangkok", lat: 13.7563, lon: 100.5018 },
-  { name: "Chiang Mai", country_code: "TH", country: "Thailand", admin1: "Chiang Mai", lat: 18.7883, lon: 98.9853 },
-  { name: "Singapore", country_code: "SG", country: "Singapore", admin1: null, lat: 1.2897, lon: 103.8501 },
-  { name: "Tokyo", country_code: "JP", country: "Japan", admin1: "Tokyo", lat: 35.6895, lon: 139.6917 },
-  { name: "Seoul", country_code: "KR", country: "South Korea", admin1: "Seoul", lat: 37.5665, lon: 126.978 },
-  { name: "Paris", country_code: "FR", country: "France", admin1: "Île-de-France", lat: 48.8534, lon: 2.3488 },
+  { name: "Hà Nội", country_code: "VN", admin1: "Hà Nội", lat: 21.0245, lon: 105.8412 },
+  { name: "Hồ Chí Minh", country_code: "VN", admin1: "Hồ Chí Minh", lat: 10.8231, lon: 106.6297 },
+  { name: "Đà Nẵng", country_code: "VN", admin1: "Đà Nẵng", lat: 16.0678, lon: 108.2208 },
+  { name: "Đà Lạt", country_code: "VN", admin1: "Lâm Đồng", lat: 11.9404, lon: 108.4583 },
+  { name: "Hội An", country_code: "VN", admin1: "Quảng Nam", lat: 15.8801, lon: 108.338 },
+  { name: "Phú Quốc", country_code: "VN", admin1: "Kiên Giang", lat: 10.2899, lon: 103.984 },
+  { name: "Sa Pa", country_code: "VN", admin1: "Lào Cai", lat: 22.3364, lon: 103.8438 },
+  { name: "Bangkok", country_code: "TH", admin1: "Bangkok", lat: 13.7563, lon: 100.5018 },
+  { name: "Chiang Mai", country_code: "TH", admin1: "Chiang Mai", lat: 18.7883, lon: 98.9853 },
+  { name: "Singapore", country_code: "SG", admin1: null, lat: 1.2897, lon: 103.8501 },
+  { name: "Tokyo", country_code: "JP", admin1: "Tokyo", lat: 35.6895, lon: 139.6917 },
+  { name: "Seoul", country_code: "KR", admin1: "Seoul", lat: 37.5665, lon: 126.978 },
+  { name: "Paris", country_code: "FR", admin1: "Île-de-France", lat: 48.8534, lon: 2.3488 },
 ];
-
-export const SOURCES: Record<number, Source> = {
-  1: { title: "Phương Trang sleeper bus timetable", url: "https://futabus.vn/" },
-  2: { title: "Dalat Wonder Resort room rates", url: "https://www.booking.com/" },
-  3: { title: "Langbiang ticket prices (forum post)", url: null },
-  4: { title: "Vietjet SGN-BKK fares", url: "https://www.vietjetair.com/" },
-  5: { title: "Grand Palace visitor information", url: "https://www.royalgrandpalace.th/" },
-  6: { title: "Massage prices in Sukhumvit (blog)", url: null },
-};
 
 export const SUGGESTION_CARDS: SuggestionCard[] = [
   {
