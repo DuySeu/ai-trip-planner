@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
@@ -10,8 +11,8 @@ from fastapi.exceptions import RequestValidationError
 from api.deps import Conn, Deps, limit_trip_create, require_quota
 from api.envelope import ApiResponse
 from api.schemas.trips import CreateTripBody, TripCreated, TripOut, trip_out
-from core.exceptions import Conflict, LimitExceeded
-from db.repositories import jobs, trips, users
+from core.exceptions import Conflict, LimitExceeded, NotFound
+from db.repositories import conversations, jobs, messages, trips, users
 from domain.currency import local_currency_for
 from domain.trip_request import today_in_vietnam, validate_request
 
@@ -38,7 +39,7 @@ def create_trip(body: CreateTripBody, conn: Conn, deps: Deps) -> ApiResponse[Tri
         raise LimitExceeded("Daily trip limit reached for this name, try again tomorrow")
 
     # The trip and its job are written together, so a trip never waits without a job
-    request = body.model_dump(mode="json", exclude={"user_id"})
+    request = body.model_dump(mode="json", exclude={"user_id", "message_id"})
     trip = trips.create_trip(
         conn,
         body.user_id,
@@ -47,6 +48,19 @@ def create_trip(body: CreateTripBody, conn: Conn, deps: Deps) -> ApiResponse[Tri
         deps.settings.retention_days,
     )
     jobs.enqueue(conn, trip.id)
+
+    # A trip made from a chat form closes the form in the same transaction. A form already
+    # used (two tabs) fails here, so the trip and job above are rolled back with it.
+    if body.message_id is not None:
+        form = messages.get_message(conn, body.message_id)
+        owner = conversations.get_conversation(conn, form.conversation_id).user_id
+        if owner != body.user_id:
+            raise NotFound(f"message {body.message_id}")
+        content = json.dumps({**request, "trip_id": str(trip.id)}, ensure_ascii=False)
+        if messages.close_trip_form(conn, form.id, "created_trip", content) is None:
+            raise Conflict("This form was already used")
+        conversations.clear_draft(conn, form.conversation_id)
+
     conn.commit()
     return ApiResponse(success=True, data=TripCreated(id=trip.id, status=trip.status))
 

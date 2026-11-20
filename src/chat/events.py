@@ -17,7 +17,7 @@ from core.exceptions import (
     QuotaExhausted,
 )
 
-EventType = Literal["token", "plan", "suggestions", "error", "done"]
+EventType = Literal["token", "plan", "suggestions", "hotels", "trip_form", "error", "done"]
 WORD_END = re.compile(r"(?<= )")
 # Errors a reply can end with; each becomes an error event instead of a broken stream
 REPLY_ERRORS = (

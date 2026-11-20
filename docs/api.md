@@ -58,6 +58,7 @@ Văn bản tự do (tên, địa điểm, ghi chú, tin nhắn) được chuẩn
 | GET | `/users/{user_id}/conversations` | Danh sách hội thoại của user, phân trang |
 | GET | `/conversations/{conversation_id}` | Hội thoại kèm một trang tin nhắn |
 | PATCH | `/conversations/{conversation_id}` | Đổi tên hội thoại |
+| PATCH | `/conversations/{conversation_id}/messages/{message_id}` | Hủy một form tạo trip trong chat |
 | DELETE | `/conversations/{conversation_id}` | Xóa hội thoại và tin nhắn |
 | POST | `/chat` | Gửi tin nhắn, nhận câu trả lời dạng SSE |
 
@@ -153,9 +154,9 @@ Trạng thái trip (`status`): `queued`, `researching`, `planning`, `ready`, `fa
 
 ### POST /trips
 
-Tạo trip và job tạo plan trong cùng một transaction. API trả về ngay; worker sẽ lấy job và viết plan, client poll `GET /trips/{id}` để xem tiến độ. Code: `src/api/routes/trips.py:22`.
+Tạo trip và job tạo plan trong cùng một transaction. API trả về ngay; worker sẽ lấy job và viết plan, client poll `GET /trips/{id}` để xem tiến độ. Code: `src/api/routes/trips.py:23`.
 
-Payload (`CreateTripBody` = `TripRequest` + `user_id`, `src/domain/trip_request.py:74`):
+Payload (`CreateTripBody` = `TripRequest` + `user_id` + `message_id` tùy chọn, `src/domain/trip_request.py:74`):
 
 ```json
 {
@@ -181,6 +182,7 @@ Payload (`CreateTripBody` = `TripRequest` + `user_id`, `src/domain/trip_request.
 | Field | Bắt buộc | Ràng buộc |
 |---|---|---|
 | `user_id` | có | UUID của user đã tồn tại |
+| `message_id` | không | UUID của tin nhắn form tạo trip trong chat mà trip này được tạo từ đó; xem bên dưới |
 | `destination` | có | Lấy từ `GET /places`; `name` 1 đến 200 ký tự, `country_code` 2 chữ in hoa, `lat` từ -90 đến 90, `lon` từ -180 đến 180 |
 | `origin` | có | 1 đến 200 ký tự |
 | `start_date` | có | Từ hôm nay trở đi (theo giờ Việt Nam) |
@@ -194,17 +196,19 @@ Payload (`CreateTripBody` = `TripRequest` + `user_id`, `src/domain/trip_request.
 
 Không gửi tiền tệ địa phương; server tự suy ra từ `country_code`.
 
+Khi có `message_id`, trong cùng transaction với trip và job, server kiểm tra tin nhắn thuộc một hội thoại của chính `user_id`, chuyển `intent` của tin nhắn từ `trip_form` sang `created_trip`, ghi `content` thành các giá trị đã gửi kèm `trip_id` (không có `user_id` và `message_id`), và xóa `request_draft` của hội thoại. `message_id` không được ghi vào request của trip. Nếu tin nhắn không còn là `trip_form` (ví dụ hai tab cùng bấm tạo) thì trả 409 và không tạo trip hay job nào.
+
 Output 202, `data` là `TripCreated`:
 
 ```json
 { "id": "uuid", "status": "queued" }
 ```
 
-Lỗi: 404 khi không có user; 422 khi sai ràng buộc hoặc quốc gia chưa được hỗ trợ; 429 `rate_limited` khi vượt giới hạn tạo trip theo IP hoặc theo user; 429 `quota_exhausted` khi hết quota OpenRouter hoặc Tavily.
+Lỗi: 404 khi không có user, hoặc `message_id` không có hay thuộc hội thoại của user khác; 409 `conflict` khi form đã được dùng hoặc đã hủy; 422 khi sai ràng buộc hoặc quốc gia chưa được hỗ trợ; 429 `rate_limited` khi vượt giới hạn tạo trip theo IP hoặc theo user; 429 `quota_exhausted` khi hết quota OpenRouter hoặc Tavily.
 
 ### GET /trips/{trip_id}
 
-Trip kèm request gốc, tiến độ và plan hiện tại. Code: `src/api/routes/trips.py:55`.
+Trip kèm request gốc, tiến độ và plan hiện tại. Code: `src/api/routes/trips.py:69`.
 
 - Payload: không có.
 
@@ -249,7 +253,7 @@ Lỗi: 404 khi không có trip.
 
 ### POST /trips/{trip_id}/retry
 
-Đưa trip bị lỗi trở lại hàng đợi. Code: `src/api/routes/trips.py:63`.
+Đưa trip bị lỗi trở lại hàng đợi. Code: `src/api/routes/trips.py:77`.
 
 - Payload: không có.
 - Output 202: `data = { "id": "uuid", "status": "queued" }`.
@@ -257,7 +261,7 @@ Lỗi: 404 khi không có trip.
 
 ### DELETE /trips/{trip_id}
 
-Xóa trip và mọi dữ liệu thuộc về nó. Code: `src/api/routes/trips.py:80`.
+Xóa trip và mọi dữ liệu thuộc về nó. Code: `src/api/routes/trips.py:94`.
 
 - Payload: không có.
 - Output: 204, không có body.
@@ -275,7 +279,7 @@ Tải plan hiện tại dưới dạng file Excel dựng từ `data/trip-templat
 
 ### POST /conversations
 
-Bắt đầu hội thoại, có thể mang theo các field của form đã nhập dở. Code: `src/api/routes/chat.py:54`.
+Bắt đầu hội thoại, có thể mang theo các field của form đã nhập dở. Code: `src/api/routes/chat.py:66`.
 
 Payload:
 
@@ -319,7 +323,7 @@ Lỗi: 404 khi không có user; 422 khi draft sai ràng buộc.
 
 ### GET /users/{user_id}/conversations
 
-Danh sách hội thoại của user, hội thoại có hoạt động gần nhất đứng trước. Code: `src/api/routes/chat.py:63`.
+Danh sách hội thoại của user, hội thoại có hoạt động gần nhất đứng trước. Code: `src/api/routes/chat.py:75`.
 
 - Query: `limit` (1 đến 100, mặc định 20), `offset` (mặc định 0).
 - Output 200: `data` là mảng `ConversationOut`, `meta = { total, limit, offset }`.
@@ -327,7 +331,7 @@ Danh sách hội thoại của user, hội thoại có hoạt động gần nh�
 
 ### GET /conversations/{conversation_id}
 
-Hội thoại kèm một trang tin nhắn. Code: `src/api/routes/chat.py:82`.
+Hội thoại kèm một trang tin nhắn. Code: `src/api/routes/chat.py:94`.
 
 - Query: `limit` (1 đến 200, mặc định 50), `offset` (mặc định 0). `meta.total` là tổng số tin nhắn.
 
@@ -355,14 +359,15 @@ Output 200, `data` là `ConversationOut` thêm `messages`:
 ```
 
 - `role`: `user` hoặc `assistant`.
-- `intent`: loại câu trả lời của assistant, một trong `plan_answer`, `plan_editor`, `trip_research`, `travel_advice`, `clarification`, `ask`, `suggest`, `answer`; có thể `null`.
-- `suggestions`: mảng thẻ gợi ý điểm đến khi assistant gợi ý, còn lại `null`.
+- `intent`: loại câu trả lời của assistant, một trong `plan_answer`, `plan_editor`, `trip_research`, `travel_advice`, `clarification`, `ask`, `suggest`, `answer`, `trip_form`, `created_trip`, `canceled_trip`, `hotel_options`; có thể `null`.
+- `suggestions`: mảng thẻ gợi ý điểm đến khi `intent = suggest`, mảng thẻ khách sạn khi `intent = hotel_options` (có thể `null` khi không tìm được khách sạn nào), còn lại `null`.
+- `trip_form`, `created_trip`, `canceled_trip`: ba trạng thái của một form tạo trip trong chat. `content` là chuỗi JSON các trường của `RequestDraft` (thêm `trip_id` khi `created_trip`), không phải văn bản. Tin nhắn chỉ đi từ `trip_form` sang một trong hai trạng thái kia, qua `POST /trips` với `message_id` hoặc `PATCH` bên dưới.
 
 Lỗi: 404 khi không có hội thoại.
 
 ### PATCH /conversations/{conversation_id}
 
-Đổi tên hội thoại; `updated_at` giữ nguyên để thứ tự danh sách không đổi. Code: `src/api/routes/chat.py:104`.
+Đổi tên hội thoại; `updated_at` giữ nguyên để thứ tự danh sách không đổi. Code: `src/api/routes/chat.py:116`.
 
 Payload:
 
@@ -376,9 +381,25 @@ Output 200: `data` là `ConversationOut`.
 
 Lỗi: 404 khi không có hội thoại; 422 khi title rỗng hoặc quá dài.
 
+### PATCH /conversations/{conversation_id}/messages/{message_id}
+
+Hủy một form tạo trip: chuyển `intent` của tin nhắn từ `trip_form` sang `canceled_trip`, giữ nguyên `content`. Code: `src/api/routes/chat.py:126`.
+
+Payload:
+
+```json
+{ "intent": "canceled_trip" }
+```
+
+- `intent`: bắt buộc, chỉ nhận `canceled_trip`.
+
+Output 200: `data` là `MessageOut` (xem `GET /conversations/{conversation_id}`).
+
+Lỗi: 404 khi không có tin nhắn hoặc tin nhắn không thuộc hội thoại trong URL; 409 `conflict` khi tin nhắn không còn là `trip_form` (đã tạo trip hoặc đã hủy); 422 khi `intent` khác `canceled_trip`. Route không kiểm tra user, giống các route hội thoại khác.
+
 ### DELETE /conversations/{conversation_id}
 
-Xóa hội thoại và toàn bộ tin nhắn. Code: `src/api/routes/chat.py:114`.
+Xóa hội thoại và toàn bộ tin nhắn. Code: `src/api/routes/chat.py:141`.
 
 - Payload: không có.
 - Output: 204, không có body.
@@ -388,7 +409,7 @@ Xóa hội thoại và toàn bộ tin nhắn. Code: `src/api/routes/chat.py:114`
 
 ### POST /chat
 
-Gửi một tin nhắn vào hội thoại và nhận câu trả lời dạng server-sent events. Nếu có `trip_id`, câu hỏi gắn với trip đang mở và assistant có thể sửa plan của trip đó. Tin nhắn đầu tiên đặt làm tiêu đề hội thoại nếu hội thoại chưa có (80 ký tự đầu). Code: `src/api/routes/chat.py:124`.
+Gửi một tin nhắn vào hội thoại và nhận câu trả lời dạng server-sent events. Nếu có `trip_id`, câu hỏi gắn với trip đang mở và assistant có thể sửa plan của trip đó. Tin nhắn đầu tiên đặt làm tiêu đề hội thoại nếu hội thoại chưa có (80 ký tự đầu). Code: `src/api/routes/chat.py:151`.
 
 Payload:
 
@@ -422,7 +443,9 @@ data: <json>
 |---|---|---|
 | `token` | `{ "text": "..." }` | Một đoạn câu trả lời (mỗi từ một event), nối lại theo thứ tự |
 | `plan` | `{ "plan_revision": 2 }` | Plan của trip đã được ghi đè; client tải lại `GET /trips/{trip_id}` |
-| `suggestions` | `{ "cards": [...] }` | Thẻ gợi ý điểm đến (`SuggestionCard`, `src/domain/discovery.py:55`): `name`, `country_code`, `why`, `length_days`, `est_cost_per_person_vnd`, `best_months`, `highlights`, `source_ids` |
+| `suggestions` | `{ "cards": [...] }` | Thẻ gợi ý điểm đến (`SuggestionCard`, `src/domain/discovery.py:60`): `name`, `country_code`, `why`, `length_days`, `est_cost_per_person_vnd`, `best_months`, `highlights`, `source_ids` |
+| `hotels` | `{ "cards": [...] }` | Thẻ khách sạn cho câu hỏi về giá hoặc lựa chọn khách sạn, sau các `token` (`HotelCard`, `src/domain/hotels.py`): `name`, `area`, `stars` (1-5 hoặc `null`), `price_per_night` (số hoặc `null`), `price_currency`, `highlights`, `source_id`, `url` (trang nguồn, do server gắn). Tối đa 6 thẻ, thẻ có giá đứng trước; không có event này khi không còn thẻ nào |
+| `trip_form` | `{ "message_id": "uuid", "draft": {...} }` | Chat nhận ra ý định tạo trip mới và đã lưu một tin nhắn `intent = trip_form`; `draft` là các trường `RequestDraft` điền sẵn từ cuộc trò chuyện (`destination` có tọa độ do server tìm). Không có `token` đi kèm |
 | `error` | `{ "code": "...", "message": "..." }` | Câu trả lời dừng vì lỗi; `code` là `quota_exhausted` (kèm `blocked_until`), `conflict`, `not_found`, `invalid_output` hoặc `llm_unavailable` |
 | `done` | `{}` | Kết thúc câu trả lời |
 

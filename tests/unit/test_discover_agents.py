@@ -5,11 +5,18 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from typing import Any
 
+from agents.create_trip_agent import CreateTripAgent, drop_past_dates
 from agents.discover_answer_agent import DiscoverAnswerAgent
 from agents.discover_ask_agent import DiscoverAskAgent
 from agents.discover_suggest_agent import DiscoverSuggestAgent
 from core.constants import ModelId
-from domain.discovery import MAX_CARDS, DiscoveryReply, RequestDraft, SuggestionsReply
+from domain.discovery import (
+    MAX_CARDS,
+    DiscoveryReply,
+    RequestDraft,
+    SuggestionsReply,
+    TripFormExtract,
+)
 from models.model_router import CallContext, ModelRouter
 from tests.fakes import FakeProvider, FakeSink
 
@@ -168,3 +175,40 @@ def test_suggest_agent_repairs_once_when_no_usable_card_is_left():
     assert len(provider.calls) == 2
     assert [r.purpose for r in sink.logs] == ["suggest", "repair"]
     assert "country_code" in provider.calls[1][0][2]["content"]
+
+
+def test_create_trip_agent_makes_one_discover_call_and_returns_the_extract():
+    answer = json.dumps({"destination_name": "Hải Phòng", "length_days": 3, "origin": "Hà Nội"})
+    provider = FakeProvider([answer])
+    router, sink = make_router(provider)
+    result = CreateTripAgent(router).run(DRAFT, TODAY, CONVERSATION, "tạo plan trip", CTX)
+    assert result == TripFormExtract(destination_name="Hải Phòng", length_days=3, origin="Hà Nội")
+    assert len(provider.calls) == 1
+    assert [r.purpose for r in sink.logs] == ["discover"]
+    content = user_content(provider)
+    assert "<today>2026-11-17</today>" in content
+    assert CONVERSATION in content
+    assert "<request>\ntạo plan trip\n</request>" in content
+
+
+def test_create_trip_prompt_hides_destination_and_shows_destination_name():
+    provider = FakeProvider(["{}"])
+    router, _ = make_router(provider)
+    CreateTripAgent(router).run(DRAFT, TODAY, CONVERSATION, "plan a trip", CTX)
+    system = provider.calls[0][1]
+    assert '"destination_name"' in system
+    assert '"destination"' not in system
+    assert '"length_days"' in system
+
+
+def test_drop_past_dates_removes_dates_before_today():
+    extract = TripFormExtract(
+        start_date=date(2026, 11, 16), end_date=date(2026, 11, 18), length_days=3
+    )
+    result = drop_past_dates(extract, TODAY)
+    assert (result.start_date, result.end_date, result.length_days) == (None, None, 3)
+
+
+def test_drop_past_dates_keeps_future_dates():
+    extract = TripFormExtract(start_date=TODAY, end_date=date(2026, 11, 19))
+    assert drop_past_dates(extract, TODAY) == extract

@@ -23,7 +23,7 @@ from api.deps import AppDeps, build_limiters, limit_api
 from api.errors import register_error_handlers
 from api.middleware import REQUEST_ID_HEADER, BodyLimitMiddleware, RequestIdMiddleware
 from api.routes import chat, exports, health, places, trips, users
-from core.logger import configure_logging
+from core.logger import setup_logging
 from core.settings import Settings, load_settings
 from core.wiring import build_router
 from db.pool import open_pool
@@ -96,8 +96,8 @@ def create_app(settings: Settings, deps: AppDeps | None = None) -> FastAPI:
     return app
 
 
-# Factory for uvicorn: settings from the environment, JSON logs on
+# Factory for uvicorn: settings from the environment, colored text logs on
 def app_factory() -> FastAPI:
     settings = load_settings(os.environ)
-    configure_logging("INFO")
+    setup_logging()
     return create_app(settings)

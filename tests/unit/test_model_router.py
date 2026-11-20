@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -187,6 +188,22 @@ def test_every_call_is_logged_with_outcome_and_tokens():
     assert (record.input_tokens, record.output_tokens) == (10, 5)
     assert record.latency_ms is not None and record.latency_ms >= 0
     assert record.error is None
+
+
+def test_every_call_writes_one_log_line_naming_the_step_model_and_outcome(caplog):
+    providers = {MODEL_A: FakeProvider([rate_limit()]), MODEL_B: FakeProvider(["second"])}
+    router, _ = make_router(providers)
+    with caplog.at_level(logging.INFO, logger="models.model_router"):
+        router.invoke("generate", MESSAGES, "secret prompt", CallContext())
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 2
+    assert lines[0].startswith(
+        f"llm call generate (write the trip plan) via {MODEL_A}: rate_limited"
+    )
+    assert lines[1].startswith(f"llm call generate (write the trip plan) via {MODEL_B}: ok")
+    assert "10 in / 5 out tokens" in lines[1]
+    assert caplog.records[0].levelno == logging.WARNING
+    assert all("secret prompt" not in line for line in lines)
 
 
 def test_failed_call_log_keeps_error_text_without_prompt():

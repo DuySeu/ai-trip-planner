@@ -19,13 +19,17 @@ import {
 } from "lucide-react";
 import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import type { Place, SuggestionCard as Card } from "../api/api.types.ts";
+import type { HotelCard, Message, Place, SuggestionCard as Card } from "../api/api.types.ts";
 import { apiRequest } from "../api/client.ts";
-import { createConversation, useConversation } from "../api/conversations.ts";
+import { createConversation, parseTripForm, useConversation } from "../api/conversations.ts";
 import { useChatStream } from "../chat/useChatStream.ts";
 import { codeKey, errorKey } from "../i18n/errorKey.ts";
 import { type MessageKey, useT } from "../i18n/LanguageProvider.tsx";
 import { useSession } from "../session/session.ts";
+import { ChatTripCanceled } from "./ChatTripCanceled.tsx";
+import { ChatTripForm } from "./ChatTripForm.tsx";
+import { ChatTripProgress } from "./ChatTripProgress.tsx";
+import { HotelSlider } from "./HotelSlider.tsx";
 import { SuggestionCard } from "./SuggestionCard.tsx";
 import { BANNER, BUTTON, TITLE } from "../styles/recipes.ts";
 
@@ -51,6 +55,7 @@ const USER_BUBBLE =
   "max-w-[85%] self-end rounded-md rounded-br-[4px] bg-secondary px-4 py-3 whitespace-pre-wrap wrap-anywhere text-secondary-foreground";
 const ASSISTANT = "flex max-w-full flex-col gap-3";
 const TEXT = "whitespace-pre-wrap wrap-anywhere";
+const TRIP_FORM_INTENTS: readonly string[] = ["trip_form", "created_trip", "canceled_trip"];
 const PLAN_UPDATED = "text-sm font-medium text-primary";
 
 interface Props {
@@ -155,6 +160,19 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
     if (thread && isPinnedRef.current) thread.scrollTop = thread.scrollHeight;
   }, [messages.length, streamedText]);
 
+  // A trip form message by its state; its content is JSON, never shown as text
+  const renderTripForm = (message: Message, id: string) => {
+    const form = parseTripForm(message.content);
+    if (form === null) return <p className={BANNER.error}>{t("chat.tripForm.broken")}</p>;
+    if (message.intent === "trip_form") return <ChatTripForm conversationId={id} message={message} />;
+    if (message.intent === "canceled_trip") return <ChatTripCanceled form={form} />;
+    return form.trip_id ? (
+      <ChatTripProgress tripId={form.trip_id} />
+    ) : (
+      <p className="text-sm text-muted-foreground">{t("chat.tripForm.deleted")}</p>
+    );
+  };
+
   const renderCards = (cards: Card[] | null) =>
     cards && cards.length > 0 ? (
       <div className="flex flex-col gap-3">
@@ -236,8 +254,16 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
             ) : (
               <li key={message.id} className={ASSISTANT}>
                 <span className="sr-only">{t("chat.assistant")}: </span>
-                {message.content && <p className={TEXT}>{message.content}</p>}
-                {renderCards(message.suggestions)}
+                {conversationId !== null && message.intent !== null && TRIP_FORM_INTENTS.includes(message.intent) ? (
+                  renderTripForm(message, conversationId)
+                ) : (
+                  message.content && <p className={TEXT}>{message.content}</p>
+                )}
+                {message.intent === "hotel_options" ? (
+                  <HotelSlider cards={message.suggestions as HotelCard[] | null} />
+                ) : (
+                  renderCards(message.suggestions as Card[] | null)
+                )}
                 {message.id === lastAssistant?.id && state.kind === "idle" && state.hasUpdatedPlan && (
                   <p className={PLAN_UPDATED}>{t("chat.planUpdated")}</p>
                 )}
@@ -250,15 +276,18 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
                 <span className="sr-only">{t("chat.you")}: </span>
                 {state.prompt}
               </li>
-              <li className={ASSISTANT}>
-                <span className="sr-only">{t("chat.assistant")}: </span>
-                <p className={TEXT}>
-                  {state.text}
-                  <span className="ml-0.5 inline-block h-4 w-2 bg-muted-foreground align-[-2px]" aria-hidden="true" />
-                </p>
-                {renderCards(state.cards)}
-                {state.hasUpdatedPlan && <p className={PLAN_UPDATED}>{t("chat.planUpdated")}</p>}
-              </li>
+              {!state.hasTripForm && (
+                <li className={ASSISTANT}>
+                  <span className="sr-only">{t("chat.assistant")}: </span>
+                  <p className={TEXT}>
+                    {state.text}
+                    <span className="ml-0.5 inline-block h-4 w-2 bg-muted-foreground align-[-2px]" aria-hidden="true" />
+                  </p>
+                  {renderCards(state.cards)}
+                  <HotelSlider cards={state.hotels} />
+                  {state.hasUpdatedPlan && <p className={PLAN_UPDATED}>{t("chat.planUpdated")}</p>}
+                </li>
+              )}
             </>
           )}
         </ol>
@@ -362,4 +391,3 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
     </div>
   );
 }
-

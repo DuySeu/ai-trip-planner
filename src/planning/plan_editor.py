@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from decimal import Decimal
 
+from chat.history import message_for_model
 from core.prompts import plan_editor_prompt
 from db.repositories.messages import MessageRow
 from domain.plan import Plan, PlanItem
@@ -99,7 +100,7 @@ def propose_edit(
         language=LANGUAGE_NAMES[request.language],
         schema=compact_schema(PlanEdit, HIDDEN_FIELDS),
     )
-    turns = "\n".join(f"{m.role}: {m.content}" for m in history[-HISTORY_MESSAGES:])
+    turns = "\n".join(f"{m.role}: {message_for_model(m)}" for m in history[-HISTORY_MESSAGES:])
     parts = [
         f"<trip>\n{_request_text(request)}\n</trip>",
         f"<plan>\n{compact_plan(plan)}\n</plan>",

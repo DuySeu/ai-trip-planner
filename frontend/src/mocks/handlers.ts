@@ -122,6 +122,18 @@ export const handlers = [
     return ok(conversation);
   }),
 
+  // PATCH /conversations/:conversationId/messages/:messageId - Cancel an open trip form
+  http.patch(apiUrl("/conversations/:conversationId/messages/:messageId"), async ({ params, request }) => {
+    const message = mockDb.messages.find((m) => m.id === params.messageId && m.conversation_id === params.conversationId);
+    if (!message) return notFound();
+    const body = (await request.json()) as { intent?: unknown };
+    if (body.intent !== "canceled_trip") return fail(422, "invalid_request", "intent must be canceled_trip");
+    if (message.intent !== "trip_form") return fail(409, "conflict", "This form was already used");
+    message.intent = "canceled_trip";
+    const { conversation_id: _c, ...saved } = message;
+    return ok(saved);
+  }),
+
   // DELETE /conversations/:conversationId - Delete with its messages; trips made from it stay
   http.delete(apiUrl("/conversations/:conversationId"), ({ params }) => {
     const conversation = mockDb.conversations.find((c) => c.id === params.conversationId);
@@ -171,6 +183,16 @@ export const handlers = [
     }
     if (reply.intent === "suggest") conversation.request_draft = discoveryDraft(conversation.request_draft);
 
+    // A trip form is saved before its event is sent, like the backend does
+    const form = reply.events.find((e): e is Extract<ChatEvent, { type: "trip_form" }> => e.type === "trip_form");
+    if (form) {
+      conversation.request_draft = form.data.draft;
+      mockDb.messages.push({
+        ...row(conversation.id, "assistant", JSON.stringify(form.data.draft), "trip_form", null, iso),
+        id: form.data.message_id,
+      });
+    }
+
     return new HttpResponse(sse(conversation.id, reply.events, reply.intent, request.signal), {
       headers: { "Content-Type": "text/event-stream" },
     });
@@ -185,12 +207,18 @@ export const handlers = [
 
   // POST /trips - Create a trip and queue its generation
   http.post(apiUrl("/trips"), async ({ request }) => {
-    const body = (await request.json()) as CreateTripBody;
+    const { message_id: messageId, ...body } = (await request.json()) as CreateTripBody;
     if (!mockDb.users.some((u) => u.id === body.user_id)) return notFound();
     const blocked = quotaBlocked();
     if (blocked) return blocked;
     const problem = firstBrokenRule(body);
     if (problem) return fail(422, "invalid_request", problem);
+
+    // A trip made from a chat form must come from that user's open form
+    const form = messageId ? mockDb.messages.find((m) => m.id === messageId) : undefined;
+    const owner = form ? mockDb.conversations.find((c) => c.id === form.conversation_id) : undefined;
+    if (messageId && (!form || owner?.user_id !== body.user_id)) return notFound();
+    if (form && form.intent !== "trip_form") return fail(409, "conflict", "This form was already used");
 
     const iso = mockDb.now().toISOString();
     const country = body.destination.country_code;
@@ -222,6 +250,12 @@ export const handlers = [
     };
     mockDb.trips.push(trip);
     mockDb.startJob(trip);
+    if (form && owner) {
+      const { user_id: _u, ...request } = body;
+      form.intent = "created_trip";
+      form.content = JSON.stringify({ ...request, trip_id: trip.id });
+      owner.request_draft = null;
+    }
     return ok({ id: trip.id, status: trip.status } satisfies TripCreated, 202);
   }),
 
@@ -377,8 +411,8 @@ function sse(conversationId: string, events: ChatEvent[], intent: Message["inten
           if (mockDb.tokenGapMs > 0) await new Promise((resolve) => setTimeout(resolve, mockDb.tokenGapMs));
         }
         if (isCancelled || signal.aborted) return;
-        if (event.type === "suggestions") cards = event.data.cards;
-        if (event.type === "done") {
+        if (event.type === "suggestions" || event.type === "hotels") cards = event.data.cards;
+        if (event.type === "done" && intent !== "trip_form") {
           mockDb.messages.push(row(conversationId, "assistant", text.trim(), intent, cards, mockDb.now().toISOString()));
         }
         controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`));

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel
@@ -47,6 +47,11 @@ class CreateConversationBody(BaseModel):
 # Body of PATCH /conversations/{id}
 class RenameBody(BaseModel):
     title: TitleText
+
+
+# Body of PATCH /conversations/{id}/messages/{id}: the only change allowed is canceling a trip form
+class CloseTripFormBody(BaseModel):
+    intent: Literal["canceled_trip"]
 
 
 # Body of POST /chat: the conversation, the text, and the trip open on screen, if any

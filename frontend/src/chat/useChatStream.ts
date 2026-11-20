@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import type { SuggestionCard } from "../api/api.types.ts";
+import type { HotelCard, SuggestionCard } from "../api/api.types.ts";
 import { ApiError } from "../api/client.ts";
 import { conversationKeys, sendMessage } from "../api/conversations.ts";
 import { parseSse } from "../api/parseSse.ts";
@@ -8,7 +8,15 @@ import { tripKeys } from "../api/trips.ts";
 
 export type ChatState =
   | { kind: "idle"; hasUpdatedPlan: boolean }
-  | { kind: "streaming"; prompt: string; text: string; cards: SuggestionCard[] | null; hasUpdatedPlan: boolean }
+  | {
+      kind: "streaming";
+      prompt: string;
+      text: string;
+      cards: SuggestionCard[] | null;
+      hotels: HotelCard[] | null;
+      hasUpdatedPlan: boolean;
+      hasTripForm: boolean;
+    }
   | { kind: "error"; code: string; draft: string };
 
 interface Options {
@@ -37,7 +45,7 @@ export function useChatStream(conversationId: string | null, { tripId, planRevis
     };
     const refreshTrip = () => (tripId ? queryClient.invalidateQueries({ queryKey: tripKeys.detail(tripId) }) : undefined);
 
-    update({ kind: "streaming", prompt: content, text: "", cards: null, hasUpdatedPlan: false });
+    update({ kind: "streaming", prompt: content, text: "", cards: null, hotels: null, hasUpdatedPlan: false, hasTripForm: false });
     try {
       const id = conversationId ?? (await ensureConversation());
       const body = await sendMessage(id, { content, trip_id: tripId, plan_revision: tripId ? planRevision : null }, signal);
@@ -51,6 +59,11 @@ export function useChatStream(conversationId: string | null, { tripId, planRevis
           update((prev) => (prev.kind === "streaming" ? { ...prev, hasUpdatedPlan: true } : prev));
         } else if (event.type === "suggestions") {
           update((prev) => (prev.kind === "streaming" ? { ...prev, cards: event.data.cards } : prev));
+        } else if (event.type === "hotels") {
+          update((prev) => (prev.kind === "streaming" ? { ...prev, hotels: event.data.cards } : prev));
+        } else if (event.type === "trip_form") {
+          // The form itself arrives with the saved messages, after done
+          update((prev) => (prev.kind === "streaming" ? { ...prev, hasTripForm: true } : prev));
         } else if (event.type === "error") {
           failure = { code: event.data.code };
           if (event.data.code === "conflict") refreshTrip();

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ from psycopg_pool import ConnectionPool
 from api.routes.exports import ascii_file_name
 from core.exceptions import Conflict
 from core.settings import load_settings
-from db.repositories import jobs, quota, trips
+from db.repositories import conversations, jobs, messages, quota, trips
 from domain.trip_request import today_in_vietnam
 from service.worker.generate_plan import run_generate_plan
 from tests.fixtures.builders import (
@@ -77,6 +78,13 @@ def make_ready(conn: Connection[Any], trip_id: str) -> None:
     plan = dalat_plan().model_dump(mode="json")
     trips.save_plan(conn, UUID(trip_id), 0, plan, 1000, False, "fake/model")
     trips.set_status(conn, UUID(trip_id), "ready")
+
+
+# An open trip form of the user in a new conversation; returns the conversation and message ids
+def open_form(conn: Connection[Any], user_id: str, draft: dict[str, Any] | None = None):
+    conversation = conversations.create_conversation(conn, UUID(user_id), draft)
+    form = messages.add_message(conn, conversation.id, "assistant", "{}", "trip_form")
+    return conversation, form
 
 
 # --- users ---
@@ -282,6 +290,66 @@ def test_create_trip_leaves_no_trip_when_queuing_the_job_fails(client, db_conn, 
 
     monkeypatch.setattr(jobs, "enqueue", broken)
     assert client.post("/trips", json=trip_body(user_id)).status_code == 409
+    assert db_conn.execute("SELECT count(*) FROM trips").fetchone()[0] == 0
+
+
+def test_create_trip_from_form_marks_message_created_with_trip_id(client, db_conn):
+    user_id = claim(client)
+    _, form = open_form(db_conn, user_id)
+    body = trip_body(user_id, message_id=str(form.id))
+    response = client.post("/trips", json=body)
+    assert response.status_code == 202, response.text
+
+    closed = messages.get_message(db_conn, form.id)
+    content = json.loads(closed.content)
+    assert closed.intent == "created_trip"
+    assert content["trip_id"] == response.json()["data"]["id"]
+    assert content["destination"] == DALAT_FIELDS["destination"]
+    assert content["start_date"] == body["start_date"]
+
+
+def test_create_trip_message_id_is_not_stored_in_the_request(client, db_conn):
+    user_id = claim(client)
+    _, form = open_form(db_conn, user_id)
+    client.post("/trips", json=trip_body(user_id, message_id=str(form.id)))
+    content = json.loads(messages.get_message(db_conn, form.id).content)
+    assert "message_id" not in content and "user_id" not in content
+
+
+def test_create_trip_from_form_clears_conversation_draft(client, db_conn):
+    user_id = claim(client)
+    conversation, form = open_form(db_conn, user_id, {"travelers": 4})
+    client.post("/trips", json=trip_body(user_id, message_id=str(form.id)))
+    assert conversations.get_conversation(db_conn, conversation.id).request_draft is None
+
+
+def test_create_trip_twice_from_one_form_returns_409_and_keeps_one_trip(client, db_conn):
+    user_id = claim(client)
+    _, form = open_form(db_conn, user_id)
+    body = trip_body(user_id, message_id=str(form.id))
+    assert client.post("/trips", json=body).status_code == 202
+    second = client.post("/trips", json=body)
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "conflict"
+    assert trips.count_trips_today(db_conn, UUID(user_id)) == 1
+    assert db_conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
+
+
+def test_create_trip_from_other_users_form_returns_404_and_creates_nothing(client, db_conn):
+    owner = claim(client, "Owner")
+    other = claim(client, "Other")
+    _, form = open_form(db_conn, owner)
+    response = client.post("/trips", json=trip_body(other, message_id=str(form.id)))
+    assert response.status_code == 404
+    assert db_conn.execute("SELECT count(*) FROM trips").fetchone()[0] == 0
+    assert db_conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+    assert messages.get_message(db_conn, form.id).intent == "trip_form"
+
+
+def test_create_trip_from_unknown_form_returns_404_and_creates_nothing(client, db_conn):
+    user_id = claim(client)
+    response = client.post("/trips", json=trip_body(user_id, message_id=str(UUID(int=1))))
+    assert response.status_code == 404
     assert db_conn.execute("SELECT count(*) FROM trips").fetchone()[0] == 0
 
 

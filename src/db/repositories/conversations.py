@@ -72,6 +72,12 @@ def save_draft(conn: Connection[Any], conversation_id: UUID, draft: Mapping[str,
         raise NotFound(f"conversation {conversation_id}")
 
 
+# Forget the trip draft, e.g. once a trip was made from it
+def clear_draft(conn: Connection[Any], conversation_id: UUID) -> None:
+    if conn.execute(QUERIES["clear_draft"], {"id": conversation_id}).rowcount == 0:
+        raise NotFound(f"conversation {conversation_id}")
+
+
 # Mark the conversation as active now
 def touch_conversation(conn: Connection[Any], conversation_id: UUID) -> None:
     if conn.execute(QUERIES["touch_conversation"], {"id": conversation_id}).rowcount == 0:

@@ -21,7 +21,7 @@ from domain.trip_request import (
 
 MAX_CARDS = 3
 # Fields the model must not see in the schema
-HIDDEN_FIELDS = {"RequestDraft": {"destination"}}
+HIDDEN_FIELDS = {"RequestDraft": {"destination"}, "TripFormExtract": {"destination"}}
 
 
 # Base of every discovery model: immutable
@@ -43,6 +43,11 @@ class RequestDraft(_Frozen):
     budget_scope: BudgetScope | None = None
     language: Language | None = None
     notes: str | None = None
+
+
+# What the model reads off the chat for a trip form; code turns destination_name into a destination
+class TripFormExtract(RequestDraft):
+    destination_name: PlaceText | None = None
 
 
 # The model's answer for an ask or answer turn: what to say, what it learned

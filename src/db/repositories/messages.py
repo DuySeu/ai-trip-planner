@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from psycopg import Connection
 from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 
+from core.exceptions import NotFound
 from db.queries import QUERIES_DIR, load_queries
 
 QUERIES = load_queries(QUERIES_DIR / "messages.sql")
@@ -49,6 +50,28 @@ def add_message(
         row = cur.execute(QUERIES["add_message"], params).fetchone()
     assert row is not None  # INSERT ... RETURNING always returns the row
     return row
+
+
+# Fetch a message by id
+def get_message(conn: Connection[Any], message_id: UUID) -> MessageRow:
+    with conn.cursor(row_factory=class_row(MessageRow)) as cur:
+        row = cur.execute(QUERIES["get_message"], {"id": message_id}).fetchone()
+    if row is None:
+        raise NotFound(f"message {message_id}")
+    return row
+
+
+# Move an open trip form to created or canceled; None when it is no longer open.
+# content replaces the form's content, None keeps it
+def close_trip_form(
+    conn: Connection[Any],
+    message_id: UUID,
+    intent: Literal["created_trip", "canceled_trip"],
+    content: str | None,
+) -> MessageRow | None:
+    params = {"id": message_id, "intent": intent, "content": content}
+    with conn.cursor(row_factory=class_row(MessageRow)) as cur:
+        return cur.execute(QUERIES["close_trip_form"], params).fetchone()
 
 
 # The last `limit` messages, oldest first

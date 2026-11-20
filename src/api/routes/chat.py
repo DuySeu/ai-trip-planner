@@ -12,9 +12,11 @@ from fastapi.responses import StreamingResponse
 from api.deps import Conn, Deps, limit_chat, require_quota
 from api.envelope import ApiResponse, PageMeta
 from api.schemas.chat import (
+    CloseTripFormBody,
     ConversationDetail,
     ConversationOut,
     CreateConversationBody,
+    MessageOut,
     RenameBody,
     SendMessageBody,
     conversation_out,
@@ -22,8 +24,10 @@ from api.schemas.chat import (
 )
 from chat.chat_service import ChatDeps, ChatTurn, prepare_message, stream_reply
 from chat.events import to_sse
-from core.exceptions import LimitExceeded
+from core.exceptions import Conflict, LimitExceeded, NotFound
 from db.repositories import conversations, messages, users
+from research.cache import DbCache
+from research.places import search_places
 
 router = APIRouter()
 
@@ -37,7 +41,15 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 # What a chat turn needs, built from the shared services; the search goes through the cache
 def get_chat_deps(deps: Deps) -> ChatDeps:
-    return ChatDeps(deps.pool, deps.router, deps.search, deps.settings, deps.now)
+    cache = DbCache(deps.pool)
+    return ChatDeps(
+        deps.pool,
+        deps.router,
+        deps.search,
+        deps.settings,
+        deps.now,
+        lambda q, language: search_places(deps.http, cache, q, language),
+    )
 
 
 ChatDepsDep = Annotated[ChatDeps, Depends(get_chat_deps)]
@@ -108,6 +120,21 @@ def rename_conversation(
     row = conversations.rename_conversation(conn, conversation_id, body.title)
     conn.commit()
     return ApiResponse(success=True, data=conversation_out(row))
+
+
+# PATCH /conversations/{conversation_id}/messages/{message_id} - Cancel an open trip form
+@router.patch("/conversations/{conversation_id}/messages/{message_id}")
+def close_trip_form(
+    conversation_id: UUID, message_id: UUID, body: CloseTripFormBody, conn: Conn
+) -> ApiResponse[MessageOut]:
+    form = messages.get_message(conn, message_id)
+    if form.conversation_id != conversation_id:
+        raise NotFound(f"message {message_id}")
+    closed = messages.close_trip_form(conn, message_id, body.intent, None)
+    if closed is None:
+        raise Conflict("This form was already used")
+    conn.commit()
+    return ApiResponse(success=True, data=message_out(closed))
 
 
 # DELETE /conversations/{conversation_id} - Delete it and its messages

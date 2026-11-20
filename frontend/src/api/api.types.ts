@@ -14,7 +14,7 @@ export const TRAVEL_STYLES = [
 ] as const;
 export const TRANSPORT_MODES = ["flight", "train", "bus", "car", "motorbike", "boat"] as const;
 export const ACTIVE_STATUSES = ["queued", "researching", "planning"] as const;
-export const CHAT_EVENT_TYPES = ["token", "plan", "suggestions", "error", "done"] as const;
+export const CHAT_EVENT_TYPES = ["token", "plan", "suggestions", "hotels", "trip_form", "error", "done"] as const;
 
 export type TravelStyle = (typeof TRAVEL_STYLES)[number];
 export type TransportMode = (typeof TRANSPORT_MODES)[number];
@@ -35,7 +35,11 @@ export type MessageIntent =
   | "clarification"
   | "ask"
   | "suggest"
-  | "answer";
+  | "answer"
+  | "trip_form"
+  | "created_trip"
+  | "canceled_trip"
+  | "hotel_options";
 
 export interface ErrorBody {
   code: string;
@@ -222,12 +226,17 @@ export interface CreateTripBody {
   budget_scope: BudgetScope;
   language: Language;
   notes: string | null;
+  // The chat trip form this trip is made from
+  message_id?: string;
 }
 
 export type RequestDraft = Partial<Omit<CreateTripBody, "user_id">> & {
   month?: string | null;
   length_days?: number | null;
 };
+
+// The content of a trip form message: the draft, plus the trip once it was created
+export type TripFormContent = RequestDraft & { trip_id?: string };
 
 export interface SuggestionCard {
   name: string;
@@ -240,12 +249,25 @@ export interface SuggestionCard {
   source_ids: number[];
 }
 
+// One hotel from a booking-site search; the server sets url from the source
+export interface HotelCard {
+  name: string;
+  area: string;
+  stars: number | null;
+  price_per_night: number | null;
+  price_currency: string;
+  highlights: string[];
+  source_id: number;
+  url: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   intent: MessageIntent | null;
-  suggestions: SuggestionCard[] | null;
+  // Destination cards when intent is suggest, hotel cards when intent is hotel_options
+  suggestions: SuggestionCard[] | HotelCard[] | null;
   created_at: string;
 }
 
@@ -264,5 +286,7 @@ export type ChatEvent =
   | { type: "token"; data: { text: string } }
   | { type: "plan"; data: { plan_revision: number } }
   | { type: "suggestions"; data: { cards: SuggestionCard[] } }
+  | { type: "hotels"; data: { cards: HotelCard[] } }
+  | { type: "trip_form"; data: { message_id: string; draft: RequestDraft } }
   | { type: "error"; data: ErrorBody }
   | { type: "done"; data: Record<string, never> };

@@ -296,3 +296,53 @@ def test_delete_conversation_removes_its_messages(db_pool, db_conn, conversation
     assert client.get(f"/conversations/{conversation.id}").status_code == 404
     assert db_conn.execute("SELECT count(*) FROM messages").fetchone() == (0,)
     assert client.delete(f"/conversations/{conversation.id}").status_code == 404
+
+
+def test_cancel_trip_form_returns_canceled_message(db_pool, db_conn, conversation):
+    form = messages.add_message(db_conn, conversation.id, "assistant", '{"a": 1}', "trip_form")
+    client, _ = chat_client(db_pool, [])
+    response = client.patch(
+        f"/conversations/{conversation.id}/messages/{form.id}", json={"intent": "canceled_trip"}
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert (data["id"], data["intent"], data["content"]) == (
+        str(form.id),
+        "canceled_trip",
+        '{"a": 1}',
+    )
+    assert messages.get_message(db_conn, form.id).intent == "canceled_trip"
+
+
+def test_cancel_after_create_returns_409(db_pool, db_conn, conversation):
+    form = messages.add_message(db_conn, conversation.id, "assistant", "{}", "trip_form")
+    messages.close_trip_form(db_conn, form.id, "created_trip", "{}")
+    client, _ = chat_client(db_pool, [])
+    response = client.patch(
+        f"/conversations/{conversation.id}/messages/{form.id}", json={"intent": "canceled_trip"}
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conflict"
+    assert messages.get_message(db_conn, form.id).intent == "created_trip"
+
+
+def test_cancel_message_of_other_conversation_returns_404(db_pool, db_conn, conversation):
+    other = conversations.create_conversation(db_conn, conversation.user_id, None)
+    form = messages.add_message(db_conn, other.id, "assistant", "{}", "trip_form")
+    client, _ = chat_client(db_pool, [])
+    response = client.patch(
+        f"/conversations/{conversation.id}/messages/{form.id}", json={"intent": "canceled_trip"}
+    )
+    assert response.status_code == 404
+    assert messages.get_message(db_conn, form.id).intent == "trip_form"
+
+
+def test_cancel_with_other_intent_returns_422(db_pool, db_conn, conversation):
+    form = messages.add_message(db_conn, conversation.id, "assistant", "{}", "trip_form")
+    client, _ = chat_client(db_pool, [])
+    for intent in ("created_trip", "ask", "trip_form"):
+        response = client.patch(
+            f"/conversations/{conversation.id}/messages/{form.id}", json={"intent": intent}
+        )
+        assert response.status_code == 422
+    assert messages.get_message(db_conn, form.id).intent == "trip_form"

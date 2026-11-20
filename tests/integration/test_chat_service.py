@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -96,7 +97,9 @@ class Rig:
             reset_hour_utc=0,
             now=lambda: NOW,
         )
-        self.deps = ChatDeps(pool, router, self.search, load_settings(ENV), lambda: NOW)
+        self.deps = ChatDeps(
+            pool, router, self.search, load_settings(ENV), lambda: NOW, lambda q, language: []
+        )
         self.router = router
 
     # Save the visitor's message and stream the reply to the end
@@ -161,6 +164,13 @@ def test_question_without_open_trip_gets_travel_advice(db_pool, db_conn, convers
     events = rig.say(conversation.id, "What should I pack for Sapa?")
     assert spoken(events) == "Bring a light jacket."
     assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "travel_advice"
+
+
+def test_routing_logs_the_chosen_flow_and_the_reason(db_pool, conversation, caplog):
+    rig = Rig(db_pool, [route("plan_answer"), "Bring a light jacket."])
+    with caplog.at_level(logging.INFO, logger="chat.chat_service"):
+        rig.say(conversation.id, "What should I pack for Sapa?")
+    assert "chat flow: travel_advice (classifier picked plan_answer, routed): fits" in caplog.text
 
 
 def test_trip_of_another_user_raises_not_found_before_streaming(
@@ -342,6 +352,78 @@ def test_research_without_trip_keeps_hits_on_the_conversation(db_pool, db_conn, 
     rig.say(conversation.id, "Visa for Japan?")
     row = db_conn.execute("SELECT kind, trip_id, conversation_id FROM research_results").fetchall()
     assert row == [("chat", None, conversation.id)]
+
+
+HOTEL_HITS = [
+    SearchHit(
+        "Mercure Hai Phong", "https://www.booking.com/hotel/vn/mercure.html", "From 1,450,000 VND"
+    ),
+    SearchHit("The Light Hotel", "https://www.agoda.com/the-light", "4-star hotel in Ngo Quyen"),
+]
+HOTEL_QUESTION = "khách sạn ở Hải Phòng 4 sao khoảng bao nhiêu tiền/đêm"
+
+
+# The model's answer for a hotel question
+def hotel_answer(reply: str, *cards: dict[str, Any]) -> str:
+    return json.dumps({"reply": reply, "cards": list(cards)})
+
+
+def test_hotel_question_searches_booking_sites_and_streams_cards(db_pool, db_conn, conversation):
+    task = "khách sạn 4 sao Hải Phòng giá mỗi đêm"
+    search = FakeSearch(default=HOTEL_HITS)
+    answer = hotel_answer(
+        "Giá tham khảo từ các trang đặt phòng.",
+        {"name": "The Light", "stars": 4, "source_id": 2},
+        {
+            "name": "Mercure",
+            "area": "Ngô Quyền",
+            "stars": 4,
+            "price_per_night": "1450000",
+            "source_id": 1,
+        },
+        {"name": "Made up", "source_id": 99},
+    )
+    rig = Rig(db_pool, [route("hotel_options", task), answer], search)
+    events = rig.say(conversation.id, HOTEL_QUESTION)
+
+    assert (search.calls, search.tasks) == ([task], ["accommodation"])
+    assert spoken(events) == "Giá tham khảo từ các trang đặt phòng."
+    assert [e.type for e in events][-2:] == ["hotels", "done"]
+    cards = events[-2].data["cards"]
+    assert [(c["name"], c["url"]) for c in cards] == [
+        ("Mercure", "https://www.booking.com/hotel/vn/mercure.html"),
+        ("The Light", "https://www.agoda.com/the-light"),
+    ]
+    assert "Mercure Hai Phong" in rig.provider.calls[1][0][0]["content"]
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert (last.intent, last.content, last.suggestions) == (
+        "hotel_options",
+        "Giá tham khảo từ các trang đặt phòng.",
+        cards,
+    )
+    row = db_conn.execute("SELECT DISTINCT kind, conversation_id FROM research_results").fetchall()
+    assert row == [("accommodation", conversation.id)]
+
+
+def test_hotel_question_without_hits_answers_in_text_only(db_pool, db_conn, conversation):
+    search = FakeSearch(default=[])
+    answer = hotel_answer("Mình chưa tìm được khách sạn nào trên các trang đặt phòng.")
+    rig = Rig(db_pool, [route("hotel_options", "hotel"), answer], search)
+    events = rig.say(conversation.id, HOTEL_QUESTION)
+
+    assert "hotels" not in [e.type for e in events]
+    assert "<search_results>\nnone\n</search_results>" in rig.provider.calls[1][0][0]["content"]
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert (last.intent, last.suggestions) == ("hotel_options", None)
+
+
+def test_hotel_cards_with_unknown_sources_only_give_no_slider(db_pool, db_conn, conversation):
+    answer = hotel_answer("Some options.", {"name": "Made up", "source_id": 99})
+    rig = Rig(db_pool, [route("hotel_options", "hotel"), answer], FakeSearch(default=HOTEL_HITS))
+    events = rig.say(conversation.id, HOTEL_QUESTION)
+
+    assert "hotels" not in [e.type for e in events]
+    assert recent_messages(db_conn, conversation.id, 2)[-1].suggestions is None
 
 
 def test_clarification_is_streamed_and_saved(db_pool, db_conn, conversation):

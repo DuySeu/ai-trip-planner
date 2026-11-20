@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -15,7 +14,7 @@ from psycopg_pool import ConnectionPool
 from api.deps import AppDeps, build_limiters, require_quota
 from api.main import create_app
 from api.middleware import MAX_BODY_BYTES
-from core.logger import JsonFormatter
+from core.logger import ColorFormatter
 from core.settings import Settings, load_settings
 from db.call_sink import DbCallSink
 from db.repositories import llm_calls, quota
@@ -104,7 +103,7 @@ def test_unknown_error_returns_500_envelope_without_exception_text(dead_pool, ca
     def boom() -> None:
         raise RuntimeError("secret-db-password")
 
-    caplog.handler.setFormatter(JsonFormatter())
+    caplog.handler.setFormatter(ColorFormatter(use_color=False))
     with caplog.at_level(logging.ERROR):
         response = TestClient(app, raise_server_exceptions=False).get(
             "/boom", headers={"X-Request-ID": "req-42"}
@@ -116,9 +115,8 @@ def test_unknown_error_returns_500_envelope_without_exception_text(dead_pool, ca
     assert body["error"]["code"] == "internal_error"
     assert "secret-db-password" not in response.text
     assert response.headers["X-Request-ID"] == "req-42"
-    logged = json.loads(caplog.text.strip().splitlines()[-1])
-    assert logged["request_id"] == "req-42"
-    assert "secret-db-password" in logged["exc_info"]
+    assert "request_id=req-42" in caplog.text
+    assert "RuntimeError: secret-db-password" in caplog.text
 
 
 def test_request_id_is_generated_when_missing_or_unsafe(dead_pool):

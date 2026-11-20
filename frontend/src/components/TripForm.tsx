@@ -5,7 +5,7 @@ import type { ApiError } from "../api/client.ts";
 import { addDays, locale, todayInVietnam } from "../format/dates.ts";
 import { COUNTRY_CURRENCY } from "../format/money.ts";
 import { errorKey } from "../i18n/errorKey.ts";
-import { useLanguage, useT } from "../i18n/LanguageProvider.tsx";
+import { type MessageKey, useLanguage, useT } from "../i18n/LanguageProvider.tsx";
 import { PlaceSearch } from "./PlaceSearch.tsx";
 import { BANNER, BUTTON, CARD, FIELD, FIELD_ERROR, HELP, INPUT, LABEL, TEXTAREA } from "../styles/recipes.ts";
 import { type TripFormErrors, type TripFormValues, validateTripForm } from "./validateTripForm.ts";
@@ -24,12 +24,23 @@ interface Props {
   initialErrors?: TripFormErrors;
   isBare?: boolean;
   submit: { isPending: boolean; error: ApiError | null };
+  submitLabel?: MessageKey;
   onSubmit(values: TripFormValues): void;
-  onGetIdeas(values: TripFormValues): void;
+  onGetIdeas?(values: TripFormValues): void;
+  onCancel?(): void;
 }
 
 // The trip request form: checks the backend's rules locally, then hands valid values up
-export function TripForm({ initialValues, initialErrors = {}, isBare = false, submit, onSubmit, onGetIdeas }: Props) {
+export function TripForm({
+  initialValues,
+  initialErrors = {},
+  isBare = false,
+  submit,
+  submitLabel = "form.submit",
+  onSubmit,
+  onGetIdeas,
+  onCancel,
+}: Props) {
   const t = useT();
   const { lang } = useLanguage();
   const [values, setValues] = useState(initialValues);
@@ -91,10 +102,12 @@ export function TripForm({ initialValues, initialErrors = {}, isBare = false, su
           <label className={LABEL} htmlFor="trip-destination">
             {t("form.destination")}
           </label>
-          <button type="button" className="inline-flex cursor-pointer items-center gap-1 text-sm font-medium text-primary underline underline-offset-3" onClick={() => onGetIdeas(values)}>
-            <Lightbulb size={16} strokeWidth={1.75} aria-hidden="true" />
-            {t("form.getIdeas")}
-          </button>
+          {onGetIdeas && (
+            <button type="button" className="inline-flex cursor-pointer items-center gap-1 text-sm font-medium text-primary underline underline-offset-3" onClick={() => onGetIdeas(values)}>
+              <Lightbulb size={16} strokeWidth={1.75} aria-hidden="true" />
+              {t("form.getIdeas")}
+            </button>
+          )}
         </div>
         <PlaceSearch
           inputId="trip-destination"
@@ -278,9 +291,16 @@ export function TripForm({ initialValues, initialErrors = {}, isBare = false, su
           {t(submitKey)}
         </p>
       )}
-      <button type="submit" className={`${BUTTON.primary} self-stretch sm:self-start`} disabled={submit.isPending}>
-        {t("form.submit")}
-      </button>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <button type="submit" className={BUTTON.primary} disabled={submit.isPending}>
+          {t(submitLabel)}
+        </button>
+        {onCancel && (
+          <button type="button" className={BUTTON.secondary} onClick={onCancel}>
+            {t("chat.tripForm.cancel")}
+          </button>
+        )}
+      </div>
     </form>
   );
 }

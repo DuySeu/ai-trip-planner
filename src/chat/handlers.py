@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from psycopg import Connection
 
 from chat.events import ChatEvent, token_events
+from chat.history import message_for_model
 from core.exceptions import Conflict, EditRejected, InvalidLLMOutput, ResearchFailed
 from core.prompts import (
     plan_answer_prompt,
@@ -148,7 +149,7 @@ def sources_text(rows: Sequence[SourceRow]) -> str:
 
 # The conversation as "role: text" lines inside <conversation>, or "" when there is none
 def conversation_text(history: tuple[MessageRow, ...]) -> str:
-    turns = "\n".join(f"{m.role}: {data_text(m.content)}" for m in history)
+    turns = "\n".join(f"{m.role}: {data_text(message_for_model(m))}" for m in history)
     return f"<conversation>\n{turns}\n</conversation>" if turns else ""
 
 

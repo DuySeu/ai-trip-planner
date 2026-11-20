@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -26,8 +27,20 @@ Outcome = Literal[
     "ok", "rate_limited", "quota_exhausted", "timeout", "provider_error", "invalid_output"
 ]
 
+logger = logging.getLogger(__name__)
+
 SERVICE = "openrouter"
 MAX_ERROR_CHARS = 300
+# What each purpose does, for the log line of a call
+STEPS: Mapping[Purpose, str] = {
+    "classify": "pick the chat flow",
+    "answer": "write the chat reply",
+    "edit": "turn the request into a plan edit",
+    "discover": "read the chat for the trip draft",
+    "suggest": "suggest destinations",
+    "generate": "write the trip plan",
+    "repair": "fix invalid JSON",
+}
 KNOWN_MODEL_IDS = frozenset(
     value for name, value in vars(ModelId).items() if isinstance(value, str) and name[0] != "_"
 )
@@ -232,6 +245,8 @@ class ModelRouter:
         output_tokens: int | None = None,
         error: Exception | None = None,
     ) -> None:
+        latency_ms = round((time.monotonic() - started) * 1000)
+        error_text = None if error is None else f"{type(error).__name__}: {error}"[:MAX_ERROR_CHARS]
         self._sink.log(
             LlmCallRecord(
                 purpose=purpose,
@@ -242,11 +257,23 @@ class ModelRouter:
                 message_id=ctx.message_id,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                latency_ms=round((time.monotonic() - started) * 1000),
-                error=None
-                if error is None
-                else f"{type(error).__name__}: {error}"[:MAX_ERROR_CHARS],
+                latency_ms=latency_ms,
+                error=error_text,
             )
+        )
+
+        # One readable line per call, next to the generic httpx request line
+        tokens = f", {input_tokens} in / {output_tokens} out tokens" if input_tokens else ""
+        logger.log(
+            logging.INFO if outcome == "ok" else logging.WARNING,
+            "llm call %s (%s) via %s: %s in %d ms%s%s",
+            purpose,
+            STEPS[purpose],
+            model_id,
+            outcome,
+            latency_ms,
+            tokens,
+            f", {error_text}" if error_text else "",
         )
 
 

@@ -9,6 +9,7 @@ import psycopg
 import pytest
 from psycopg.types.json import Jsonb
 
+from db.repositories import conversations, messages, users
 from scripts.migrate import apply_migrations
 from tests.integration.conftest import MIGRATIONS
 
@@ -237,3 +238,25 @@ def test_deleting_user_cascades_to_conversations_and_messages(db_conn):
 
     assert count(db_conn, "conversations") == 0
     assert count(db_conn, "messages") == 0
+
+
+@pytest.mark.parametrize("intent", ["trip_form", "created_trip", "canceled_trip"])
+def test_message_accepts_trip_form_intents(db_conn, intent):
+    user = users.claim_user(db_conn, "Duy")
+    conv = conversations.create_conversation(db_conn, user.id, None)
+    row = messages.add_message(db_conn, conv.id, "assistant", "{}", intent)
+    assert row.intent == intent
+
+
+def test_message_accepts_hotel_options_intent(db_conn):
+    user = users.claim_user(db_conn, "Duy")
+    conv = conversations.create_conversation(db_conn, user.id, None)
+    row = messages.add_message(db_conn, conv.id, "assistant", "Some options", "hotel_options", [])
+    assert row.intent == "hotel_options"
+
+
+def test_message_still_rejects_unknown_intent(db_conn):
+    user = users.claim_user(db_conn, "Duy")
+    conv = conversations.create_conversation(db_conn, user.id, None)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        messages.add_message(db_conn, conv.id, "assistant", "{}", "nope")

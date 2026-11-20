@@ -4,6 +4,15 @@ INSERT INTO messages (conversation_id, role, content, intent, suggestions, creat
 VALUES (%(conversation_id)s, %(role)s, %(content)s, %(intent)s, %(suggestions)s, clock_timestamp())
 RETURNING *;
 
+-- name: get_message
+SELECT * FROM messages WHERE id = %(id)s;
+
+-- name: close_trip_form
+-- Only an open form closes, so two tabs cannot both use it; no row back means it was already closed
+UPDATE messages SET intent = %(intent)s, content = COALESCE(%(content)s, content)
+WHERE id = %(id)s AND intent = 'trip_form'
+RETURNING *;
+
 -- name: recent_messages
 -- The last `limit` messages, returned oldest first
 SELECT * FROM (

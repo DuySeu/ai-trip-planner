@@ -1,5 +1,6 @@
 import type {
   Category,
+  HotelCard,
   ItemStatus,
   Place,
   Plan,
@@ -32,6 +33,29 @@ export const PLACES: Place[] = [
   { name: "Tokyo", country_code: "JP", admin1: "Tokyo", lat: 35.6895, lon: 139.6917 },
   { name: "Seoul", country_code: "KR", admin1: "Seoul", lat: 37.5665, lon: 126.978 },
   { name: "Paris", country_code: "FR", admin1: "Île-de-France", lat: 48.8534, lon: 2.3488 },
+];
+
+export const HOTEL_CARDS: HotelCard[] = [
+  {
+    name: "Mercure Hai Phong",
+    area: "Ngô Quyền",
+    stars: 4,
+    price_per_night: 1450000,
+    price_currency: "VND",
+    highlights: ["Outdoor pool", "Near Vincom"],
+    source_id: 101,
+    url: "https://www.booking.com/hotel/vn/mercure-hai-phong.html",
+  },
+  {
+    name: "The Light Hotel",
+    area: "Lê Hồng Phong",
+    stars: 4,
+    price_per_night: null,
+    price_currency: "VND",
+    highlights: ["Rooftop bar"],
+    source_id: 102,
+    url: "https://www.agoda.com/the-light-hotel/hotel/haiphong-vn.html",
+  },
 ];
 
 export const SUGGESTION_CARDS: SuggestionCard[] = [

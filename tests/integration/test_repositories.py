@@ -8,6 +8,7 @@ import pytest
 
 from core.exceptions import Conflict, NotFound, PlanConflict
 from db.repositories.conversations import (
+    clear_draft,
     create_conversation,
     get_conversation,
     list_conversations,
@@ -18,8 +19,10 @@ from db.repositories.jobs import active_job, enqueue, finish, lease_next, requeu
 from db.repositories.llm_calls import LlmCallRecord, count_today, log_call
 from db.repositories.messages import (
     add_message,
+    close_trip_form,
     count_intent,
     count_user_messages_today,
+    get_message,
     recent_messages,
 )
 from db.repositories.quota import active_block, block, count_tavily_today
@@ -215,6 +218,45 @@ def test_save_draft_replaces_draft(db_conn, user):
     conversation = create_conversation(db_conn, user.id, None)
     save_draft(db_conn, conversation.id, {"travelers": 3})
     assert get_conversation(db_conn, conversation.id).request_draft == {"travelers": 3}
+
+
+def test_clear_draft_sets_request_draft_to_null(db_conn, user):
+    conversation = create_conversation(db_conn, user.id, {"travelers": 3})
+    clear_draft(db_conn, conversation.id)
+    assert get_conversation(db_conn, conversation.id).request_draft is None
+
+
+def test_get_unknown_message_raises_not_found(db_conn, user):
+    conversation = create_conversation(db_conn, user.id, None)
+    message = add_message(db_conn, conversation.id, "assistant", "{}", "trip_form")
+    assert get_message(db_conn, message.id) == message
+    with pytest.raises(NotFound):
+        get_message(db_conn, conversation.id)
+
+
+def test_close_trip_form_moves_open_form_to_created(db_conn, user):
+    conversation = create_conversation(db_conn, user.id, None)
+    form = add_message(db_conn, conversation.id, "assistant", '{"length_days": 3}', "trip_form")
+    closed = close_trip_form(db_conn, form.id, "created_trip", '{"trip_id": "x"}')
+    assert closed is not None
+    assert (closed.intent, closed.content) == ("created_trip", '{"trip_id": "x"}')
+    assert get_message(db_conn, form.id).intent == "created_trip"
+
+
+def test_close_trip_form_returns_none_when_already_closed(db_conn, user):
+    conversation = create_conversation(db_conn, user.id, None)
+    form = add_message(db_conn, conversation.id, "assistant", "{}", "trip_form")
+    assert close_trip_form(db_conn, form.id, "created_trip", "{}") is not None
+    assert close_trip_form(db_conn, form.id, "canceled_trip", None) is None
+    assert get_message(db_conn, form.id).intent == "created_trip"
+
+
+def test_close_trip_form_keeps_content_when_none_given(db_conn, user):
+    conversation = create_conversation(db_conn, user.id, None)
+    form = add_message(db_conn, conversation.id, "assistant", '{"length_days": 3}', "trip_form")
+    closed = close_trip_form(db_conn, form.id, "canceled_trip", None)
+    assert closed is not None
+    assert (closed.intent, closed.content) == ("canceled_trip", '{"length_days": 3}')
 
 
 def test_recent_messages_returns_last_n_oldest_first(db_conn, user):

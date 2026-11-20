@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12,6 +13,7 @@ from psycopg import Connection
 from psycopg_pool import ConnectionPool
 
 from agents.orchestrator_agent import OrchestratorAgent
+from chat.create_trip_turn import run_create_trip_turn
 from chat.discovery_turn import Action, run_discovery_turn
 from chat.events import REPLY_ERRORS, ChatEvent, event_for_error, token_events
 from chat.handlers import (
@@ -22,13 +24,19 @@ from chat.handlers import (
     give_travel_advice,
     load_context,
 )
+from chat.history import message_for_model
+from chat.hotel_turn import run_hotel_turn
 from core.exceptions import Conflict, NotFound, PlanConflict
 from core.settings import Settings
 from db.repositories import conversations, messages, trips
 from db.repositories.messages import MessageRow
+from domain.trip_request import Language
 from models.model_router import CallContext, ModelRouter, RouterProvider
 from orchestration.routing_schema import AgentSpec, RoutingDecision
+from research.places import Place
 from service.tavily.search import WebSearch
+
+logger = logging.getLogger(__name__)
 
 # The agents the classifier may route to, with the descriptions it sees
 CATALOG: tuple[AgentSpec, ...] = (
@@ -46,7 +54,26 @@ CATALOG: tuple[AgentSpec, ...] = (
     AgentSpec(
         name="travel_advice",
         description="General travel advice or tips that are not tied to a plan and are not "
-        "about choosing a destination for a new trip.",
+        "about choosing a destination for a new trip. This includes questions asked while "
+        'thinking about a trip, such as "I want to plan 3 days in Hai Phong, which area is '
+        'good and how do I get there?": the visitor asks a question, not for the plan.',
+    ),
+    AgentSpec(
+        name="hotel_options",
+        description="A question about hotels in a named place: what they cost per night, "
+        'which hotels of a star rating or budget to pick, such as "how much is a 4-star hotel '
+        'in Hai Phong per night?" or "khách sạn gần biển Đồ Sơn giá rẻ". The step task is a '
+        "web search query for those hotels with the place, the stars or budget and the word "
+        "price.",
+    ),
+    AgentSpec(
+        name="create_trip",
+        description="Only when the visitor directly asks the app to make the day-by-day plan "
+        'or itinerary of a new trip now, such as "make the plan for me" or "tạo plan trip cho '
+        'tôi", or answers yes ("có", "ok", "yes") right after the assistant asked whether to '
+        "make the plan. Saying they want to plan a trip while asking a question (where to stay, how to "
+        "travel, what to see) is travel_advice, not this. Not while the visitor is still "
+        "choosing a destination, and not to change the open trip.",
     ),
     AgentSpec(
         name="discover_ask",
@@ -83,6 +110,7 @@ class ChatDeps:
     search: WebSearch
     settings: Settings
     now: Callable[[], datetime]
+    places: Callable[[str, Language], list[Place]]
 
 
 # A validated message: the saved user message and what the visitor had open
@@ -170,11 +198,28 @@ def _dispatch(turn: ChatTurn, deps: ChatDeps, reply: _Reply) -> Iterator[ChatEve
         agent = "plan_answer" if turn.trip_id else "travel_advice"
     if agent == "plan_answer" and data.plan is None:
         agent = "travel_advice"
+    picked = step.agent if step is not None else "none"
+    logger.info(
+        "chat flow: %s (classifier picked %s, %s): %s",
+        agent,
+        picked,
+        decision.status,
+        decision.reasoning,
+    )
 
     if agent in DISCOVERY_AGENTS:
         # The discovery turn saves its own assistant message
         task = step.task if step is not None else None
         yield from run_discovery_turn(turn, deps, DISCOVERY_AGENTS[agent], task)
+        return
+    if agent == "create_trip":
+        # The create trip turn saves its own assistant message
+        yield from run_create_trip_turn(turn, deps)
+        return
+    if agent == "hotel_options":
+        # The hotel turn saves its own assistant message, with its cards
+        query = step.task if step is not None else turn.message.content
+        yield from run_hotel_turn(data, turn, deps, call_ctx, query)
         return
     reply.intent = agent
     match agent:
@@ -195,5 +240,5 @@ def _classify(
 ) -> RoutingDecision:
     provider = RouterProvider(deps.router, "classify", call_ctx)
     agent = OrchestratorAgent(model_id=provider.model_id, inference_config={}, llm=provider)
-    history = [{"role": m.role, "content": m.content} for m in data.history]
+    history = [{"role": m.role, "content": message_for_model(m)} for m in data.history]
     return agent.route([*history, {"role": "user", "content": turn.message.content}], CATALOG)

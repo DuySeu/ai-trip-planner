@@ -13,9 +13,11 @@ from db.repositories.trips import TripRow
 from domain.trip_request import Destination, TripRequest
 
 
-# Body of POST /trips: the trip request plus who it is for; the local currency is never sent
+# Body of POST /trips: the trip request plus who it is for; the local currency is never sent.
+# message_id is the chat trip form this trip is made from, if any
 class CreateTripBody(TripRequest):
     user_id: UUID
+    message_id: UUID | None = None
 
 
 # What POST /trips and POST /trips/{id}/retry return: where to poll

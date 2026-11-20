@@ -26,11 +26,7 @@ SEARCH_DOMAINS: Mapping[SearchTask, tuple[str, ...]] = {
     "accommodation": (
         "booking.com",
         "agoda.com",
-        "tripadvisor.com",
-        "expedia.com",
         "traveloka.com",
-        "mytour.vn",
-        "ivivu.com",
     ),
     "transport": (
         "rome2rio.com",

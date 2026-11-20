@@ -80,7 +80,9 @@ class Rig:
             reset_hour_utc=0,
             now=lambda: NOW,
         )
-        self.deps = ChatDeps(pool, router, search, load_settings(ENV), lambda: NOW)
+        self.deps = ChatDeps(
+            pool, router, search, load_settings(ENV), lambda: NOW, lambda q, language: []
+        )
 
 
 @pytest.fixture

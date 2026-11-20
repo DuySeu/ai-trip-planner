@@ -1,9 +1,13 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { delay, HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
+import { apiUrl } from "../api/client.ts";
+import { parseTripForm } from "../api/conversations.ts";
 import { DOMESTIC_TRIP_ID, SEED_CONVERSATION_ID } from "../mocks/fixtures.ts";
 import { mockDb } from "../mocks/mockDb.ts";
+import { server } from "../mocks/server.ts";
 import { createQueryClient } from "../queryClient.ts";
 import { useChatStream } from "./useChatStream.ts";
 
@@ -41,6 +45,38 @@ describe("useChatStream", () => {
     await waitFor(() => expect(result.current.state).toEqual({ kind: "error", code: "conflict", draft: "Switch to the flight" }));
   });
 
+  it("trip_form_event_sets_has_trip_form", async () => {
+    // A reply that sends the form event and then waits, so the streaming state can be seen
+    const frames = ['event: trip_form\ndata: {"message_id":"m1","draft":{"length_days":3}}\n\n', "event: done\ndata: {}\n\n"];
+    server.use(
+      http.post(apiUrl("/chat"), () => {
+        const encoder = new TextEncoder();
+        const body = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(encoder.encode(frames[0]));
+            await delay(200);
+            controller.enqueue(encoder.encode(frames[1]));
+            controller.close();
+          },
+        });
+        return new HttpResponse(body, { headers: { "Content-Type": "text/event-stream" } });
+      }),
+    );
+    const { result } = renderHook(
+      () => useChatStream(SEED_CONVERSATION_ID, { tripId: null, planRevision: null, ensureConversation: async () => "x" }),
+      { wrapper },
+    );
+    let sent: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      sent = result.current.send("tạo plan trip cho tôi");
+    });
+    await waitFor(() => expect(result.current.state).toMatchObject({ kind: "streaming", hasTripForm: true }));
+    await act(async () => {
+      await sent;
+    });
+    expect(result.current.state).toEqual({ kind: "idle", hasUpdatedPlan: false });
+  });
+
   it("creates_the_conversation_on_first_send", async () => {
     let created = 0;
     const { result } = renderHook(
@@ -59,5 +95,18 @@ describe("useChatStream", () => {
       await result.current.send("hello");
     });
     expect(created).toBe(1);
+  });
+});
+
+describe("parseTripForm", () => {
+  it("parseTripForm_returns_null_for_broken_json", () => {
+    expect(parseTripForm("not json")).toBeNull();
+    expect(parseTripForm("[1, 2]")).toBeNull();
+    expect(parseTripForm("null")).toBeNull();
+  });
+
+  it("parseTripForm_reads_trip_id", () => {
+    const content = JSON.stringify({ origin: "Hà Nội", length_days: 3, trip_id: "abc" });
+    expect(parseTripForm(content)).toEqual({ origin: "Hà Nội", length_days: 3, trip_id: "abc" });
   });
 });

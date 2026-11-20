@@ -17,6 +17,9 @@ SELECT count(*) FROM conversations WHERE user_id = %(user_id)s;
 -- name: save_draft
 UPDATE conversations SET request_draft = %(draft)s WHERE id = %(id)s;
 
+-- name: clear_draft
+UPDATE conversations SET request_draft = NULL WHERE id = %(id)s;
+
 -- name: touch_conversation
 UPDATE conversations SET updated_at = now() WHERE id = %(id)s;
 

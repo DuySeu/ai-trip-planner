@@ -21,7 +21,7 @@ import psycopg
 from dotenv import load_dotenv
 
 from core.exceptions import NotFound
-from core.logger import configure_logging
+from core.logger import setup_logging
 from core.settings import load_settings
 from core.wiring import build_router
 from db.pool import open_pool
@@ -104,7 +104,7 @@ def run_worker(
 def main() -> None:
     load_dotenv()
     settings = load_settings(os.environ)
-    configure_logging("INFO")
+    setup_logging()
 
     now: Callable[[], datetime] = functools.partial(datetime.now, UTC)
     pool = open_pool(settings.db.conninfo())

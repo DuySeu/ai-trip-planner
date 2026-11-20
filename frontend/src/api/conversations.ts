@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Conversation, ConversationDetail, RequestDraft } from "./api.types.ts";
+import type { Conversation, ConversationDetail, Message, RequestDraft, TripFormContent } from "./api.types.ts";
 import { apiRequest, readEnvelope, send } from "./client.ts";
 
 const LIST_LIMIT = 50;
@@ -44,6 +44,32 @@ export function useRenameConversation() {
       );
     },
   });
+}
+
+// PATCH /conversations/{id}/messages/{id} - cancel an open trip form, then reload the thread
+export function useCloseTripForm() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ conversationId, messageId }: { conversationId: string; messageId: string }) =>
+      (
+        await apiRequest<Message>(`/conversations/${conversationId}/messages/${messageId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ intent: "canceled_trip" }),
+        })
+      ).data,
+    onSuccess: (_message, { conversationId }) =>
+      queryClient.invalidateQueries({ queryKey: conversationKeys.detail(conversationId) }),
+  });
+}
+
+// The content of a trip form message; null when it is not a JSON object
+export function parseTripForm(content: string): TripFormContent | null {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as TripFormContent) : null;
+  } catch {
+    return null;
+  }
 }
 
 // DELETE /conversations/{id} - then drop it from every cached list

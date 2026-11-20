@@ -1,7 +1,18 @@
-import { ACTIVE_STATUSES, type ChatEvent, type Conversation, type MessageIntent, type Trip } from "../api/api.types.ts";
-import { SUGGESTION_CARDS } from "./fixtures.ts";
+import {
+  ACTIVE_STATUSES,
+  type ChatEvent,
+  type Conversation,
+  type MessageIntent,
+  type RequestDraft,
+  type Trip,
+} from "../api/api.types.ts";
+import { addDays, todayInVietnam } from "../format/dates.ts";
+import { HOTEL_CARDS, SUGGESTION_CARDS } from "./fixtures.ts";
+import { mockDb } from "./mockDb.ts";
 
+const CREATE_TRIP = /plan trip|tạo plan/i;
 const DISCOVER = /where|ideas|gợi ý|đi đâu/i;
+const HOTEL = /hotel|khách sạn/i;
 const EDIT = /change|switch|cheaper|đổi|thay/i;
 const REPLAN = /date|ngày|people|người/i;
 const VIETNAMESE = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i;
@@ -19,11 +30,47 @@ interface Reply {
 }
 
 // The canned reply to a chat message; the first matching rule wins
-export function scriptReply({ content, trip }: Input): Reply {
+export function scriptReply({ content, trip, conversation }: Input): Reply {
   const isVi = VIETNAMESE.test(content);
   const say = (en: string, vi: string): ChatEvent[] =>
     (isVi ? vi : en).split(/(?<= )/).map((text) => ({ type: "token", data: { text } }));
   const done: ChatEvent = { type: "done", data: {} };
+
+  // A trip form prefilled from the chat when no trip is open; the handler saves the message
+  if (trip === null && CREATE_TRIP.test(content)) {
+    const draft: RequestDraft = {
+      destination: { name: "Hải Phòng", country_code: "VN", lat: 20.86, lon: 106.68 },
+      origin: "Hà Nội",
+      start_date: addDays(todayInVietnam(mockDb.now()), 30),
+      length_days: 3,
+      travelers: 2,
+      travel_styles: ["food"],
+      budget_amount: "3000000",
+      budget_scope: "per_person",
+      ...conversation.request_draft,
+    };
+    return {
+      intent: "trip_form",
+      updatedTrip: null,
+      events: [{ type: "trip_form", data: { message_id: crypto.randomUUID(), draft } }, done],
+    };
+  }
+
+  // Hotel options from booking sites; the handler saves the cards with the reply
+  if (HOTEL.test(content) && !EDIT.test(content)) {
+    return {
+      intent: "hotel_options",
+      updatedTrip: null,
+      events: [
+        ...say(
+          "Prices are a guide from booking sites and change with your dates. Check the hotel's page before you book.",
+          "Giá tham khảo từ các trang đặt phòng và thay đổi theo ngày. Bạn xem trang của khách sạn trước khi đặt nhé.",
+        ),
+        { type: "hotels", data: { cards: HOTEL_CARDS } },
+        done,
+      ],
+    };
+  }
 
   // Destination ideas when no trip is open
   if (trip === null && DISCOVER.test(content)) {
