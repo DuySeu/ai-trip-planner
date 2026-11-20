@@ -1,54 +1,42 @@
 # Intent của tin nhắn chat
 
-Mỗi tin nhắn của người dùng được router (`OrchestratorAgent`) đọc cùng 10 tin nhắn gần nhất, rồi chọn một agent trong `CATALOG` (`src/chat/chat_service.py:42`). Agent được chọn quyết định intent của câu trả lời, và intent đó được lưu ở `messages.intent`. Mô tả của từng agent trong `CATALOG` là thứ duy nhất router dựa vào để chọn, nên muốn đổi cách phân loại thì sửa mô tả đó.
+Mỗi tin nhắn của người dùng được router (`OrchestratorAgent`) đọc cùng 10 tin nhắn gần nhất, rồi chọn một trong 7 agent của `CATALOG` (`src/chat/chat_service.py:43`). Agent được chọn quyết định intent của câu trả lời (`AGENT_INTENT`, `src/chat/chat_service.py:93`), và intent đó được lưu ở `messages.intent`; phần có cấu trúc của câu trả lời nằm ở `messages.metadata` (bảng ở `docs/api.md`, mục `GET /conversations/{conversation_id}`). Mô tả của từng agent trong `CATALOG` là thứ duy nhất router dựa vào để chọn, nên muốn đổi cách phân loại thì sửa mô tả đó.
 
 ## Câu hỏi nào ra intent nào
 
 | Intent | Agent | Câu hỏi có nội dung như thế nào | Ví dụ | Chỉ có trong |
 |---|---|---|---|---|
-| `plan_answer` | `plan_answer` | Hỏi về plan của trip đang mở: lịch ngày nào, giá món nào, đi gì, ở đâu trong plan | "Ngày 2 đi những đâu?", "Tổng chi phí là bao nhiêu?" | Chat của trip |
-| `plan_editor` | `plan_editor` | Muốn sửa plan của trip đang mở: thêm, dời, thay, bỏ một mục, hoặc đổi ngày, số người, điểm xuất phát, ngôn ngữ | "Bỏ chợ đêm ngày 1", "Đổi thành 3 người" | Chat của trip |
-| `trip_research` | `trip_research` | Cần thông tin mới mà plan chưa có, phải tìm trên web | "Có khách sạn nào rẻ hơn gần biển không?" | Chat của trip (về lý thuyết cũng chạy ở /chat) |
-| `travel_advice` | `travel_advice` | Hỏi mẹo, kinh nghiệm du lịch chung, không gắn với plan và không phải đang chọn điểm đến. Gồm cả câu hỏi khi đang tính đi đâu đó mà chưa nhờ lên plan | "Tôi muốn đi Hải Phòng 3 ngày, nên ở khu nào và đi lại bằng gì?", "Đi Phú Quốc tháng 7 có bị mưa nhiều không?" | Cả hai |
-| `hotel_options` | `hotel_options` | Hỏi về khách sạn ở một nơi đã nêu tên: giá mỗi đêm, chọn khách sạn mấy sao hay theo ngân sách | "Khách sạn 4 sao ở Đà Nẵng giá bao nhiêu một đêm?", "khách sạn gần biển Đồ Sơn giá rẻ" | Cả hai |
-| `trip_form` | `create_trip` | Nhờ thẳng app lên plan cho một trip mới ngay bây giờ, hoặc trả lời "có", "ok", "yes" ngay sau khi assistant hỏi có muốn lên plan không | "Tạo plan trip Đà Lạt 3 ngày cho 2 người đi từ Hà Nội cho tôi", "make the plan for me" | Cả hai, trừ khi muốn sửa trip đang mở |
-| `ask` | `discover_ask` | Đang tìm xem nên đi đâu nhưng còn thiếu thông tin cơ bản: thời gian hoặc tháng, ngân sách, nơi xuất phát, ai đi | "Tôi muốn đi du lịch biển" | Luồng tìm điểm đến |
-| `suggest` | `discover_suggest` | Đang tìm xem nên đi đâu và đã có đủ thông tin cơ bản, hoặc bảo cứ gợi ý | "Gợi ý vài bãi biển cho 2 người đi từ Hà Nội tháng 7, 4 ngày, ngân sách 10 triệu" | Luồng tìm điểm đến |
-| `answer` | `discover_answer` | Đang chọn điểm đến và hỏi chung về nơi chốn, mùa, chi phí, visa mà không cần thẻ gợi ý | "Thái Lan có cần visa không?" | Luồng tìm điểm đến |
-| `clarification` | không có | Router không giao cho agent nào: câu không nói rõ cần làm gì, nhắc tới thứ không xác định được ("cái đó"), hoặc không agent nào làm được việc được hỏi (đặt phòng, thanh toán, gửi tin nhắn) | "Làm cái đó giúp tôi", "Đặt phòng giúp tôi" | Cả hai |
+| `advice` | `advice` | Hỏi về plan của trip đang mở, hoặc mẹo, kinh nghiệm du lịch chung, kể cả câu hỏi khi đang tính đi đâu đó. Không tìm web; có plan thì trả lời từ plan | "Ngày 2 đi những đâu?", "Tôi muốn đi Hải Phòng 3 ngày, nên ở khu nào?" | Cả hai |
+| `advice` | `web_lookup` | Cần thông tin mới trên web mà plan và kiến thức chung không có. `metadata = {"searched": true}` | "Tháng 7 Đà Nẵng có lễ hội gì?", quy định visa năm nay | Cả hai |
+| `discover` | `discover` | Muốn ý tưởng đi đâu, hoặc muốn đi chơi mà chưa có điểm đến. Draft còn thiếu thì mở thẻ hỏi nhu cầu 6 bước, đủ rồi thì gợi ý điểm đến | "Tôi muốn đi du lịch biển", "gợi ý chỗ đi chơi cuối tuần" | Cả hai |
+| `booking_search` | `hotel_search` | Tìm khách sạn ở một nơi đã nêu tên, hoặc giá mỗi đêm | "Khách sạn 4 sao ở Đà Nẵng giá bao nhiêu một đêm?" | Cả hai |
+| `booking_search` | `flight_search` | Tìm vé máy bay, tàu, xe giữa hai nơi, hoặc giá vé | "vé máy bay Hà Nội đi Đà Nẵng" | Cả hai |
+| `create_trip` | `create_trip` | Nhờ thẳng app lên plan cho một trip mới ngay bây giờ, hoặc trả lời "có", "ok", "yes" ngay sau khi assistant hỏi có muốn lên plan không | "Tạo plan trip Đà Lạt 3 ngày cho 2 người đi từ Hà Nội cho tôi" | Cả hai, trừ khi muốn sửa trip đang mở |
+| `edit_plan` | `edit_plan` | Sửa plan của trip đang mở: thêm, dời, thay, bỏ, đổi ngày, số người, nơi đi, ngôn ngữ | "Đổi ngày 2 sang đi Cát Bà" | Chat của trip |
 
-## Intent không đến từ câu hỏi
+## Tin nhắn không qua router
 
-| Intent | Khi nào xuất hiện |
+| Khi nào | Chạy gì |
 |---|---|
-| `created_trip` | Người dùng bấm Create trên form trong chat. `POST /trips` với `message_id` chuyển tin nhắn `trip_form` thành `created_trip` (`src/api/routes/trips.py:54`) |
-| `canceled_trip` | Người dùng bấm Cancel trên form. `PATCH /conversations/{id}/messages/{message_id}` chuyển `trip_form` thành `canceled_trip` |
+| `POST /chat` có `discover_message_id` | Đóng thẻ hỏi nhu cầu, gợi ý điểm đến từ draft hiện có. Lưu `discover` với `{"kind": "suggestions"}` |
+| `POST /chat` có `booking_message_id` và `dates` | Đóng thẻ chờ ngày, tìm khách sạn hoặc vé với ngày đã chọn. Lưu `booking_search` với `status = results` |
+| `PATCH /conversations/{id}/messages/{message_id}` trả lời một bước | Ghi câu trả lời vào thẻ và draft, không gọi AI |
+| Bấm Create trên form | `POST /trips` với `message_id` đặt `metadata.status` của form từ `open` thành `created` kèm `trip_id` (`src/api/routes/trips.py`) |
+| Bấm Cancel trên form | `PATCH` với `{"status": "canceled"}` đặt `metadata.status` thành `canceled` |
 
 ## Các quy tắc code đè lên lựa chọn của router
 
-- Router trả một trạng thái khác `routed` và `needs_clarification`, nên không có agent nào được chọn: intent là `plan_answer` khi đang ở trong trip, `travel_advice` khi không (`src/chat/chat_service.py:197-198`).
-- Router chọn `plan_answer` mà trip chưa có plan: chuyển sang `travel_advice` (`src/chat/chat_service.py:199-200`).
-- Router chia câu hỏi thành nhiều bước: chỉ bước đầu tiên chạy, các bước sau bị bỏ (`src/chat/chat_service.py:194-195`).
-- Hội thoại đã có 2 câu trả lời `ask` (`MAX_ASKS = 2`, `src/chat/discovery_turn.py:32`): lần chọn `ask` tiếp theo chạy thành `suggest`, để người dùng không bị hỏi mãi.
-- `plan_editor` ở /chat (không có trip đang mở): trả câu cố định "Hãy mở chuyến đi bạn muốn thay đổi rồi nhắn lại cho mình nhé." (`src/chat/handlers.py:55-58`).
+- Router hỏi lại vì chưa rõ câu hỏi (`needs_clarification`): lưu `advice` với `metadata = {"clarify": true}` (`src/chat/chat_service.py:254-257`).
+- Router chọn một agent không có trong `CATALOG`, hoặc không chọn được agent nào sau một lần sửa: chạy `advice` (`src/chat/chat_service.py:262`).
+- Router chia câu hỏi thành nhiều bước: chỉ bước đầu tiên chạy, các bước sau bị bỏ (`src/chat/chat_service.py:259-260`).
+- `discover` khi đã có thẻ hỏi nhu cầu đang mở (người dùng gõ thay vì bấm): đóng thẻ đó rồi gợi ý luôn, không mở thẻ mới (`src/chat/discovery_turn.py:92-94`).
+- `hotel_search` hoặc `flight_search` khi trip đang mở và draft đều không có ngày, ngày đó đã qua hoặc sai luật (hoặc vé chưa có nơi đi): lưu thẻ chờ ngày `need_dates` thay vì tìm (`src/chat/booking_turn.py:55-58`).
+- `edit_plan` khi không có trip đang mở có plan: trả câu cố định "Hãy mở chuyến đi bạn muốn thay đổi rồi nhắn lại cho mình nhé." (`src/chat/handlers.py:251-253`).
 
 ## Ranh giới dễ nhầm
 
-- `travel_advice` và `trip_form`: nói muốn đi đâu đó kèm một câu hỏi (ở đâu, đi bằng gì, xem gì) là `travel_advice`. Chỉ khi nhờ thẳng "lên plan", "tạo trip" mới ra `trip_form`.
-- `travel_advice` và `answer`: cả hai đều là hỏi đáp chung. `answer` chỉ dùng khi người dùng đang trong quá trình chọn điểm đến, còn lại là `travel_advice`.
-- `travel_advice` và `hotel_options`: hỏi về khách sạn ở một nơi cụ thể (giá, số sao) là `hotel_options`. Hỏi chung nên ở khu nào là `travel_advice`.
-- `trip_research` và `hotel_options`: trong trip, hỏi tìm khách sạn có giá hoặc số sao cụ thể nên ra `hotel_options` (có thẻ). Tìm thông tin khác mà plan chưa có là `trip_research`.
-- `ask` và `clarification`: cả hai đều hỏi lại. `ask` hỏi thông tin cơ bản của chuyến đi khi đang tìm điểm đến. `clarification` là router không hiểu câu hỏi hoặc không có agent làm được.
-
-## Kết quả thử trên /chat ngày 2026-11-20
-
-| Câu hỏi | Dự kiến | Thực tế |
-|---|---|---|
-| Tôi muốn đi du lịch biển | `ask` | `clarification` |
-| Gợi ý vài bãi biển cho 2 người đi từ Hà Nội tháng 7, 4 ngày, ngân sách 10 triệu | `suggest` | `suggest` |
-| Đi Phú Quốc tháng 7 có bị mưa nhiều không? | `answer` | `travel_advice` |
-| Tôi muốn đi Hải Phòng 3 ngày, nên ở khu nào và đi lại bằng gì? | `travel_advice` | `travel_advice` |
-| Khách sạn 4 sao ở Đà Nẵng giá bao nhiêu một đêm? | `hotel_options` | `hotel_options` |
-| Tạo plan trip Đà Lạt 3 ngày cho 2 người đi từ Hà Nội cho tôi | `trip_form` | `trip_form` |
-
-Router dùng model miễn phí trên OpenRouter, nên cùng một câu có thể ra intent khác nhau giữa các lần chạy.
+- `advice` và `create_trip`: nói muốn đi đâu đó kèm một câu hỏi (ở đâu, đi bằng gì, xem gì) là `advice`. Chỉ khi nhờ thẳng "lên plan", "tạo trip" mới ra `create_trip`.
+- `advice` và `web_lookup`: cả hai đều lưu intent `advice`. `web_lookup` chỉ khi cần tin mới (lễ hội năm nay, giá vé tham quan, quy định mới); câu hỏi về plan đang mở luôn là `advice`.
+- `advice` và `hotel_search`: hỏi khách sạn ở một nơi cụ thể (giá, số sao) là `hotel_search`, có thẻ. Hỏi chung nên ở khu nào là `advice`.
+- `discover` và `advice`: chưa có điểm đến và cần ý tưởng là `discover`. Đã nêu điểm đến và hỏi về nó là `advice`.
+- `advice` với `clarify` và thẻ hỏi nhu cầu: thẻ hỏi thông tin cơ bản của chuyến đi khi đang tìm điểm đến. `clarify` là router không hiểu câu hỏi.

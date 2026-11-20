@@ -1,29 +1,30 @@
-"""How a message reads to the model: trip form messages hold JSON, so history shows a short line."""
+"""How a message reads to the model: cards and forms hold their data in metadata, so history shows a
+short line for them."""
 
 from __future__ import annotations
 
-import json
+from typing import Any
 
 from db.repositories.messages import MessageRow
 
-TRIP_FORM_STATES = {"trip_form": "open", "created_trip": "created", "canceled_trip": "canceled"}
-TRIP_FORM_INTENTS = frozenset(TRIP_FORM_STATES)
 
-
-# The text the model sees for a message; a trip form becomes one line, not its JSON
+# The text the model sees for a message; a trip form or a questionnaire card becomes one line
 def message_for_model(message: MessageRow) -> str:
-    state = TRIP_FORM_STATES.get(message.intent or "")
-    if state is None:
-        return message.content
+    meta = message.metadata or {}
+    if message.intent == "create_trip":
+        return _trip_form_line(meta)
+    if message.intent == "discover" and meta.get("kind") == "questionnaire" and not message.content:
+        answers = meta.get("answers")
+        known = ", ".join(sorted(answers)) if isinstance(answers, dict) and answers else "nothing"
+        return f"[questionnaire: {meta.get('status', '?')}, answered {known}]"
+    return message.content
 
-    # A form that is not a JSON object (old or hand-edited data) is a bare marker
-    try:
-        form = json.loads(message.content)
-    except json.JSONDecodeError:
-        return "[trip form]"
+
+# "[trip form: place, when, status]"; a draft that is not an object gives a bare marker
+def _trip_form_line(meta: dict[str, Any]) -> str:
+    form = meta.get("draft")
     if not isinstance(form, dict):
         return "[trip form]"
-
     destination = form.get("destination")
     place = destination.get("name") if isinstance(destination, dict) else None
     if form.get("start_date") and form.get("end_date"):
@@ -32,4 +33,4 @@ def message_for_model(message: MessageRow) -> str:
         when = f"{form['length_days']} days"
     else:
         when = "no dates"
-    return f"[trip form: {place or '?'}, {when}, {state}]"
+    return f"[trip form: {place or '?'}, {when}, {meta.get('status', '?')}]"

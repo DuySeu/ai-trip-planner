@@ -1,11 +1,11 @@
 import { CircleX } from "lucide-react";
-import type { TripFormContent } from "../api/api.types.ts";
+import type { RequestDraft } from "../api/api.types.ts";
 import { useT } from "../i18n/LanguageProvider.tsx";
 import { CARD, TITLE } from "../styles/recipes.ts";
 import { TripFacts } from "./TripFacts.tsx";
 
 // A trip form the visitor canceled: what it held, marked canceled
-export function ChatTripCanceled({ form }: { form: TripFormContent }) {
+export function ChatTripCanceled({ form }: { form: RequestDraft }) {
   const t = useT();
   const destination = form.destination?.name ?? null;
 

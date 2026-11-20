@@ -6,14 +6,10 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from agents.create_trip_agent import CreateTripAgent, drop_past_dates
-from agents.discover_answer_agent import DiscoverAnswerAgent
-from agents.discover_ask_agent import DiscoverAskAgent
 from agents.discover_suggest_agent import DiscoverSuggestAgent
 from core.constants import ModelId
 from domain.discovery import (
     MAX_CARDS,
-    DiscoveryReply,
-    RequestDraft,
     SuggestionsReply,
     TripFormExtract,
 )
@@ -42,10 +38,6 @@ def make_router(provider: FakeProvider) -> tuple[ModelRouter, FakeSink]:
     return router, sink
 
 
-def reply_answer(reply: str, draft: dict[str, Any] | None = None) -> str:
-    return json.dumps({"reply": reply, "request_draft": draft or {}})
-
-
 def card(name: str, country: str, source_ids: Sequence[int] = ()) -> dict[str, Any]:
     return {
         "name": name,
@@ -72,46 +64,24 @@ def user_content(provider: FakeProvider, call: int = 0) -> str:
     return provider.calls[call][0][0]["content"]
 
 
-def test_ask_agent_makes_one_discover_call_and_returns_the_reply():
-    provider = FakeProvider([reply_answer("Which month?", {"travelers": 3})])
-    router, sink = make_router(provider)
-    result = DiscoverAskAgent(router).run(DRAFT, TODAY, CONVERSATION, "somewhere warm", CTX)
-    assert result == DiscoveryReply(reply="Which month?", request_draft=RequestDraft(travelers=3))
-    assert len(provider.calls) == 1
-    assert [r.purpose for r in sink.logs] == ["discover"]
+def test_create_trip_prompt_holds_today_draft_conversation_and_request_in_order():
+    provider = FakeProvider(["{}"])
+    router, _ = make_router(provider)
+    CreateTripAgent(router).run(DRAFT, TODAY, CONVERSATION, "somewhere warm", CTX)
+    content = user_content(provider)
+    assert "<today>2026-11-17</today>" in content
+    assert f"<draft>\n{json.dumps(DRAFT)}\n</draft>" in content
+    assert CONVERSATION in content
+    assert "<request>\nsomewhere warm\n</request>" in content
+    assert "<sources>" not in content
+    assert content.index("<draft>") < content.index("<conversation>") < content.index("<request>")
 
 
-def test_answer_agent_makes_one_discover_call_and_returns_the_reply():
-    provider = FakeProvider([reply_answer("Visas are not needed.")])
-    router, sink = make_router(provider)
-    result = DiscoverAnswerAgent(router).run(DRAFT, TODAY, CONVERSATION, "visa for Thailand?", CTX)
-    assert result.reply == "Visas are not needed."
-    assert len(provider.calls) == 1
-    assert [r.purpose for r in sink.logs] == ["discover"]
-
-
-def test_ask_and_answer_prompts_hold_today_draft_conversation_and_request():
-    for agent_class in (DiscoverAskAgent, DiscoverAnswerAgent):
-        provider = FakeProvider([reply_answer("ok")])
-        router, _ = make_router(provider)
-        agent_class(router).run(DRAFT, TODAY, CONVERSATION, "somewhere warm", CTX)
-        content = user_content(provider)
-        assert "<today>2026-11-17</today>" in content
-        assert f"<draft>\n{json.dumps(DRAFT)}\n</draft>" in content
-        assert CONVERSATION in content
-        assert "<request>\nsomewhere warm\n</request>" in content
-        assert "<sources>" not in content
-        assert (
-            content.index("<draft>") < content.index("<conversation>") < content.index("<request>")
-        )
-
-
-def test_ask_and_answer_prompts_leave_out_an_empty_conversation():
-    for agent_class in (DiscoverAskAgent, DiscoverAnswerAgent):
-        provider = FakeProvider([reply_answer("ok")])
-        router, _ = make_router(provider)
-        agent_class(router).run(DRAFT, TODAY, "", "somewhere warm", CTX)
-        assert "<conversation>" not in user_content(provider)
+def test_create_trip_prompt_leaves_out_an_empty_conversation():
+    provider = FakeProvider(["{}"])
+    router, _ = make_router(provider)
+    CreateTripAgent(router).run(DRAFT, TODAY, "", "somewhere warm", CTX)
+    assert "<conversation>" not in user_content(provider)
 
 
 def test_suggest_agent_makes_one_suggest_call_and_returns_the_cards():

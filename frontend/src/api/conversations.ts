@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Conversation, ConversationDetail, Message, RequestDraft, TripFormContent } from "./api.types.ts";
-import { apiRequest, readEnvelope, send } from "./client.ts";
+import type { Conversation, ConversationDetail, FlightDates, HotelDates, Message, RequestDraft } from "./api.types.ts";
+import { ApiError, apiRequest, readEnvelope, send } from "./client.ts";
 
 const LIST_LIMIT = 50;
 
@@ -54,7 +54,7 @@ export function useCloseTripForm() {
       (
         await apiRequest<Message>(`/conversations/${conversationId}/messages/${messageId}`, {
           method: "PATCH",
-          body: JSON.stringify({ intent: "canceled_trip" }),
+          body: JSON.stringify({ status: "canceled" }),
         })
       ).data,
     onSuccess: (_message, { conversationId }) =>
@@ -62,14 +62,33 @@ export function useCloseTripForm() {
   });
 }
 
-// The content of a trip form message; null when it is not a JSON object
-export function parseTripForm(content: string): TripFormContent | null {
-  try {
-    const parsed: unknown = JSON.parse(content);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as TripFormContent) : null;
-  } catch {
-    return null;
-  }
+export interface AnswerBody {
+  step: number;
+  choice: string | string[] | null;
+  answers: Record<string, unknown>;
+}
+
+// PATCH /conversations/{id}/messages/{id} - save one step of a questionnaire card, then swap the cached message
+export function useAnswerQuestion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ conversationId, messageId, body }: { conversationId: string; messageId: string; body: AnswerBody }) =>
+      (
+        await apiRequest<Message>(`/conversations/${conversationId}/messages/${messageId}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        })
+      ).data,
+    onSuccess: (updated, { conversationId }) =>
+      queryClient.setQueryData<ConversationDetail>(conversationKeys.detail(conversationId), (detail) =>
+        detail ? { ...detail, messages: detail.messages.map((m) => (m.id === updated.id ? updated : m)) } : detail,
+      ),
+    // Closed in another tab: reload the thread so the card shows closed
+    onError: (error, { conversationId }) =>
+      error instanceof ApiError && error.code === "conflict"
+        ? queryClient.invalidateQueries({ queryKey: conversationKeys.detail(conversationId) })
+        : undefined,
+  });
 }
 
 // DELETE /conversations/{id} - then drop it from every cached list
@@ -101,7 +120,15 @@ export function useConversation(conversationId: string | null) {
 // POST /chat - the reply body as an SSE stream; errors before streaming throw ApiError
 export async function sendMessage(
   conversationId: string,
-  body: { content: string; trip_id: string | null; plan_revision: number | null },
+  body: {
+    content: string;
+    trip_id: string | null;
+    plan_revision: number | null;
+    discover_message_id?: string;
+    booking_message_id?: string;
+    dates?: HotelDates | FlightDates;
+    origin?: string;
+  },
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
   const response = await send("/chat", {

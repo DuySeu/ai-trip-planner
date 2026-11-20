@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from psycopg import Connection
@@ -18,7 +18,7 @@ from db.queries import QUERIES_DIR, load_queries
 QUERIES = load_queries(QUERIES_DIR / "messages.sql")
 
 
-# One row of messages; suggestions is the raw JSONB array of destination cards
+# One row of messages; metadata is the structured part of a reply (cards, form or card state)
 @dataclass(frozen=True)
 class MessageRow:
     id: UUID
@@ -26,7 +26,7 @@ class MessageRow:
     role: str
     content: str
     intent: str | None
-    suggestions: list[Any] | None
+    metadata: dict[str, Any] | None
     created_at: datetime
 
 
@@ -37,14 +37,14 @@ def add_message(
     role: str,
     content: str,
     intent: str | None = None,
-    suggestions: Sequence[Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> MessageRow:
     params = {
         "conversation_id": conversation_id,
         "role": role,
         "content": content,
         "intent": intent,
-        "suggestions": None if suggestions is None else Jsonb(list(suggestions)),
+        "metadata": None if metadata is None else Jsonb(dict(metadata)),
     }
     with conn.cursor(row_factory=class_row(MessageRow)) as cur:
         row = cur.execute(QUERIES["add_message"], params).fetchone()
@@ -53,25 +53,33 @@ def add_message(
 
 
 # Fetch a message by id
-def get_message(conn: Connection[Any], message_id: UUID) -> MessageRow:
+def get_message(conn: Connection[Any], message_id: UUID, lock: bool = False) -> MessageRow:
+    query = QUERIES["lock_message" if lock else "get_message"]
     with conn.cursor(row_factory=class_row(MessageRow)) as cur:
-        row = cur.execute(QUERIES["get_message"], {"id": message_id}).fetchone()
+        row = cur.execute(query, {"id": message_id}).fetchone()
     if row is None:
         raise NotFound(f"message {message_id}")
     return row
 
 
-# Move an open trip form to created or canceled; None when it is no longer open.
-# content replaces the form's content, None keeps it
-def close_trip_form(
+# Replace the metadata while it still holds every key of expect (an open form, an open card);
+# None when it already moved on
+def update_open_metadata(
     conn: Connection[Any],
     message_id: UUID,
-    intent: Literal["created_trip", "canceled_trip"],
-    content: str | None,
+    expect: Mapping[str, Any],
+    metadata: Mapping[str, Any],
 ) -> MessageRow | None:
-    params = {"id": message_id, "intent": intent, "content": content}
+    params = {"id": message_id, "expect": Jsonb(dict(expect)), "metadata": Jsonb(dict(metadata))}
     with conn.cursor(row_factory=class_row(MessageRow)) as cur:
-        return cur.execute(QUERIES["close_trip_form"], params).fetchone()
+        return cur.execute(QUERIES["update_open_metadata"], params).fetchone()
+
+
+# The newest questionnaire card of the conversation that is still open, if any
+def find_open_questionnaire(conn: Connection[Any], conversation_id: UUID) -> MessageRow | None:
+    params = {"conversation_id": conversation_id}
+    with conn.cursor(row_factory=class_row(MessageRow)) as cur:
+        return cur.execute(QUERIES["find_open_questionnaire"], params).fetchone()
 
 
 # The last `limit` messages, oldest first
@@ -100,13 +108,5 @@ def count_messages(conn: Connection[Any], conversation_id: UUID) -> int:
 # Messages the user sent since midnight in Vietnam, over all their conversations
 def count_user_messages_today(conn: Connection[Any], user_id: UUID) -> int:
     row = conn.execute(QUERIES["count_user_messages_today"], {"user_id": user_id}).fetchone()
-    assert row is not None
-    return int(row[0])
-
-
-# Messages in the conversation with this intent
-def count_intent(conn: Connection[Any], conversation_id: UUID, intent: str) -> int:
-    params = {"conversation_id": conversation_id, "intent": intent}
-    row = conn.execute(QUERIES["count_intent"], params).fetchone()
     assert row is not None
     return int(row[0])

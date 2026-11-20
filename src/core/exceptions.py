@@ -16,6 +16,12 @@ class Conflict(Exception):
     pass
 
 
+# A value the visitor sent breaks a rule a request schema cannot express (dates in the past, an
+# unknown button id); the message says which
+class InvalidInput(Exception):
+    pass
+
+
 # The plan changed since the client read it
 class PlanConflict(Conflict):
     pass

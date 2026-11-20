@@ -240,23 +240,73 @@ def test_deleting_user_cascades_to_conversations_and_messages(db_conn):
     assert count(db_conn, "messages") == 0
 
 
-@pytest.mark.parametrize("intent", ["trip_form", "created_trip", "canceled_trip"])
-def test_message_accepts_trip_form_intents(db_conn, intent):
+def _conversation_id(db_conn) -> UUID:
     user = users.claim_user(db_conn, "Duy")
-    conv = conversations.create_conversation(db_conn, user.id, None)
-    row = messages.add_message(db_conn, conv.id, "assistant", "{}", intent)
-    assert row.intent == intent
+    return conversations.create_conversation(db_conn, user.id, None).id
 
 
-def test_message_accepts_hotel_options_intent(db_conn):
-    user = users.claim_user(db_conn, "Duy")
-    conv = conversations.create_conversation(db_conn, user.id, None)
-    row = messages.add_message(db_conn, conv.id, "assistant", "Some options", "hotel_options", [])
-    assert row.intent == "hotel_options"
+@pytest.mark.parametrize("intent", ["advice", "edit_plan"])
+def test_message_accepts_new_intent_without_metadata(db_conn, intent):
+    row = messages.add_message(db_conn, _conversation_id(db_conn), "assistant", "Ok", intent)
+    assert (row.intent, row.metadata) == (intent, None)
 
 
-def test_message_still_rejects_unknown_intent(db_conn):
-    user = users.claim_user(db_conn, "Duy")
-    conv = conversations.create_conversation(db_conn, user.id, None)
+@pytest.mark.parametrize("intent", ["travel_advice", "trip_form", "hotel_options", "nope"])
+def test_message_rejects_old_or_unknown_intent(db_conn, intent):
     with pytest.raises(psycopg.errors.CheckViolation):
-        messages.add_message(db_conn, conv.id, "assistant", "{}", "nope")
+        messages.add_message(db_conn, _conversation_id(db_conn), "assistant", "{}", intent)
+
+
+@pytest.mark.parametrize("metadata", [None, {"status": "sent"}, {"draft": {}}])
+def test_create_trip_message_needs_a_known_status(db_conn, metadata):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        messages.add_message(
+            db_conn, _conversation_id(db_conn), "assistant", "", "create_trip", metadata
+        )
+
+
+def test_create_trip_message_with_open_status_is_saved(db_conn):
+    form = {"status": "open", "draft": {}, "trip_id": None}
+    row = messages.add_message(
+        db_conn, _conversation_id(db_conn), "assistant", "", "create_trip", form
+    )
+    assert row.metadata == form
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [None, {"kind": "train", "status": "results"}, {"kind": "flight", "status": "waiting"}],
+)
+def test_booking_search_message_needs_kind_and_status(db_conn, metadata):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        messages.add_message(
+            db_conn, _conversation_id(db_conn), "assistant", "Q", "booking_search", metadata
+        )
+
+
+def test_booking_search_message_asking_for_dates_is_saved(db_conn):
+    card = {"kind": "flight", "status": "need_dates", "query": "vé Hà Nội Đà Nẵng"}
+    row = messages.add_message(
+        db_conn, _conversation_id(db_conn), "assistant", "When?", "booking_search", card
+    )
+    assert row.metadata == card
+
+
+@pytest.mark.parametrize("metadata", [None, {"kind": "hotel"}])
+def test_discover_message_needs_questionnaire_or_suggestions_kind(db_conn, metadata):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        messages.add_message(
+            db_conn, _conversation_id(db_conn), "assistant", "", "discover", metadata
+        )
+
+
+def test_discover_suggestions_message_is_saved(db_conn):
+    row = messages.add_message(
+        db_conn,
+        _conversation_id(db_conn),
+        "assistant",
+        "Ideas",
+        "discover",
+        {"kind": "suggestions", "cards": []},
+    )
+    assert row.metadata == {"kind": "suggestions", "cards": []}

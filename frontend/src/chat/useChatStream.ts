@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import type { HotelCard, SuggestionCard } from "../api/api.types.ts";
+import type { FlightDates, HotelDates, MessageMetadata } from "../api/api.types.ts";
 import { ApiError } from "../api/client.ts";
 import { conversationKeys, sendMessage } from "../api/conversations.ts";
 import { parseSse } from "../api/parseSse.ts";
@@ -12,12 +12,16 @@ export type ChatState =
       kind: "streaming";
       prompt: string;
       text: string;
-      cards: SuggestionCard[] | null;
-      hotels: HotelCard[] | null;
+      // The reply's structured part; messageId is set when the message was saved before the event
+      metadata: { messageId: string | null; value: MessageMetadata } | null;
       hasUpdatedPlan: boolean;
-      hasTripForm: boolean;
     }
   | { kind: "error"; code: string; draft: string };
+
+// A message that answers a card skips the router: suggest from a questionnaire, or search with the chosen dates
+export type FollowUp =
+  | { discover_message_id: string }
+  | { booking_message_id: string; dates: HotelDates | FlightDates; origin?: string };
 
 interface Options {
   tripId: string | null;
@@ -35,7 +39,7 @@ export function useChatStream(conversationId: string | null, { tripId, planRevis
   const abort = () => controllerRef.current?.abort();
 
   // Send one message; resolves true when the reply finished without an error
-  const send = async (content: string): Promise<boolean> => {
+  const send = async (content: string, followUp?: FollowUp): Promise<boolean> => {
     abort();
     const controller = new AbortController();
     controllerRef.current = controller;
@@ -45,10 +49,15 @@ export function useChatStream(conversationId: string | null, { tripId, planRevis
     };
     const refreshTrip = () => (tripId ? queryClient.invalidateQueries({ queryKey: tripKeys.detail(tripId) }) : undefined);
 
-    update({ kind: "streaming", prompt: content, text: "", cards: null, hotels: null, hasUpdatedPlan: false, hasTripForm: false });
+    update({ kind: "streaming", prompt: content, text: "", metadata: null, hasUpdatedPlan: false });
+    let id = conversationId;
     try {
-      const id = conversationId ?? (await ensureConversation());
-      const body = await sendMessage(id, { content, trip_id: tripId, plan_revision: tripId ? planRevision : null }, signal);
+      id ??= await ensureConversation();
+      const body = await sendMessage(
+        id,
+        { content, trip_id: tripId, plan_revision: tripId ? planRevision : null, ...followUp },
+        signal,
+      );
 
       let failure: { code: string } | null = null;
       for await (const event of parseSse(body, signal)) {
@@ -57,13 +66,9 @@ export function useChatStream(conversationId: string | null, { tripId, planRevis
         } else if (event.type === "plan") {
           refreshTrip();
           update((prev) => (prev.kind === "streaming" ? { ...prev, hasUpdatedPlan: true } : prev));
-        } else if (event.type === "suggestions") {
-          update((prev) => (prev.kind === "streaming" ? { ...prev, cards: event.data.cards } : prev));
-        } else if (event.type === "hotels") {
-          update((prev) => (prev.kind === "streaming" ? { ...prev, hotels: event.data.cards } : prev));
-        } else if (event.type === "trip_form") {
-          // The form itself arrives with the saved messages, after done
-          update((prev) => (prev.kind === "streaming" ? { ...prev, hasTripForm: true } : prev));
+        } else if (event.type === "metadata") {
+          const metadata = { messageId: event.data.message_id, value: event.data.metadata };
+          update((prev) => (prev.kind === "streaming" ? { ...prev, metadata } : prev));
         } else if (event.type === "error") {
           failure = { code: event.data.code };
           if (event.data.code === "conflict") refreshTrip();
@@ -86,8 +91,10 @@ export function useChatStream(conversationId: string | null, { tripId, planRevis
     } catch (err) {
       if (signal.aborted) return false;
       const code = err instanceof ApiError ? err.code : "internal_error";
-      if (code === "conflict") await refreshTrip();
-      update({ kind: "error", code, draft: content });
+      // A card pressed here may have been used in another tab: reload the thread so it shows closed
+      if (code === "conflict" && followUp && id) await queryClient.invalidateQueries({ queryKey: conversationKeys.detail(id) });
+      else if (code === "conflict") await refreshTrip();
+      update({ kind: "error", code: code === "conflict" && followUp ? "card_closed" : code, draft: content });
       return false;
     }
   };

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import io
-import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -83,7 +82,8 @@ def make_ready(conn: Connection[Any], trip_id: str) -> None:
 # An open trip form of the user in a new conversation; returns the conversation and message ids
 def open_form(conn: Connection[Any], user_id: str, draft: dict[str, Any] | None = None):
     conversation = conversations.create_conversation(conn, UUID(user_id), draft)
-    form = messages.add_message(conn, conversation.id, "assistant", "{}", "trip_form")
+    meta = {"status": "open", "draft": {}, "trip_id": None}
+    form = messages.add_message(conn, conversation.id, "assistant", "", "create_trip", meta)
     return conversation, form
 
 
@@ -293,7 +293,7 @@ def test_create_trip_leaves_no_trip_when_queuing_the_job_fails(client, db_conn, 
     assert db_conn.execute("SELECT count(*) FROM trips").fetchone()[0] == 0
 
 
-def test_create_trip_from_form_marks_message_created_with_trip_id(client, db_conn):
+def test_create_trip_from_form_sets_created_and_trip_id(client, db_conn):
     user_id = claim(client)
     _, form = open_form(db_conn, user_id)
     body = trip_body(user_id, message_id=str(form.id))
@@ -301,19 +301,20 @@ def test_create_trip_from_form_marks_message_created_with_trip_id(client, db_con
     assert response.status_code == 202, response.text
 
     closed = messages.get_message(db_conn, form.id)
-    content = json.loads(closed.content)
-    assert closed.intent == "created_trip"
-    assert content["trip_id"] == response.json()["data"]["id"]
-    assert content["destination"] == DALAT_FIELDS["destination"]
-    assert content["start_date"] == body["start_date"]
+    assert closed.metadata is not None
+    assert (closed.intent, closed.metadata["status"]) == ("create_trip", "created")
+    assert closed.metadata["trip_id"] == response.json()["data"]["id"]
+    assert closed.metadata["draft"]["destination"] == DALAT_FIELDS["destination"]
+    assert closed.metadata["draft"]["start_date"] == body["start_date"]
 
 
 def test_create_trip_message_id_is_not_stored_in_the_request(client, db_conn):
     user_id = claim(client)
     _, form = open_form(db_conn, user_id)
     client.post("/trips", json=trip_body(user_id, message_id=str(form.id)))
-    content = json.loads(messages.get_message(db_conn, form.id).content)
-    assert "message_id" not in content and "user_id" not in content
+    meta = messages.get_message(db_conn, form.id).metadata
+    assert meta is not None
+    assert "message_id" not in meta["draft"] and "user_id" not in meta["draft"]
 
 
 def test_create_trip_from_form_clears_conversation_draft(client, db_conn):
@@ -343,7 +344,11 @@ def test_create_trip_from_other_users_form_returns_404_and_creates_nothing(clien
     assert response.status_code == 404
     assert db_conn.execute("SELECT count(*) FROM trips").fetchone()[0] == 0
     assert db_conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
-    assert messages.get_message(db_conn, form.id).intent == "trip_form"
+    assert messages.get_message(db_conn, form.id).metadata == {
+        "status": "open",
+        "draft": {},
+        "trip_id": None,
+    }
 
 
 def test_create_trip_from_unknown_form_returns_404_and_creates_nothing(client, db_conn):

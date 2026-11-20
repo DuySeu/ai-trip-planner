@@ -1,20 +1,12 @@
 import { ExternalLink, MapPin, Star } from "lucide-react";
 import type { HotelCard as Hotel } from "../api/api.types.ts";
+import { siteOf } from "../format/siteOf.ts";
 import { useT } from "../i18n/LanguageProvider.tsx";
 import { BADGE, CARD, TITLE } from "../styles/recipes.ts";
 import { Price } from "./Price.tsx";
 
 const HOME_ONLY = { home: "VND", local: null, local_to_home_rate: null, rate_date: null } as const;
 const META = "flex items-center gap-2 text-sm text-muted-foreground [&>svg]:shrink-0";
-
-// The site name of a source url, without "www."; the url itself when it cannot be read
-function siteOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
 
 // One hotel from a booking site: stars, area, a guide price per night and a link to its page
 export function HotelCard({ hotel }: { hotel: Hotel }) {

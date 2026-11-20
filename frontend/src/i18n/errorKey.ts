@@ -5,6 +5,7 @@ const KNOWN = [
   "invalid_request",
   "not_found",
   "conflict",
+  "card_closed",
   "rate_limited",
   "quota_exhausted",
   "network_error",

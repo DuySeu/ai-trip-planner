@@ -115,17 +115,16 @@ describe("mock backend", () => {
   it("plan_trip_message_saves_a_trip_form_and_the_form_can_be_used_once", async () => {
     const conversation = await newConversation();
     const { events } = await chat(conversation.id, { content: "plan trip for me" });
-    const form = events.find((e) => e.type === "trip_form");
-    expect(form?.type === "trip_form" && form.data.draft.destination?.name).toBe("Hải Phòng");
-    const messageId = form?.type === "trip_form" ? form.data.message_id : "";
-    expect(mockDb.messages.at(-1)).toMatchObject({ id: messageId, intent: "trip_form" });
+    const form = events.find((e) => e.type === "metadata");
+    const messageId = form?.type === "metadata" ? form.data.message_id : null;
+    expect(form?.type === "metadata" && form.data.metadata).toMatchObject({ status: "open", draft: { destination: { name: "Hải Phòng" } } });
+    expect(mockDb.messages.at(-1)).toMatchObject({ id: messageId, intent: "create_trip", content: "" });
 
     const created = await apiRequest<{ id: string }>("/trips", post({ ...validBody(), message_id: messageId }));
-    expect(mockDb.messages.at(-1)).toMatchObject({ id: messageId, intent: "created_trip" });
-    expect(JSON.parse(mockDb.messages.at(-1)?.content ?? "{}")).toMatchObject({ trip_id: created.data.id });
+    expect(mockDb.messages.at(-1)).toMatchObject({ id: messageId, metadata: { status: "created", trip_id: created.data.id } });
     await expect(apiRequest("/trips", post({ ...validBody(), message_id: messageId }))).rejects.toMatchObject({ status: 409 });
     await expect(
-      apiRequest(`/conversations/${conversation.id}/messages/${messageId}`, { method: "PATCH", body: JSON.stringify({ intent: "canceled_trip" }) }),
+      apiRequest(`/conversations/${conversation.id}/messages/${messageId}`, { method: "PATCH", body: JSON.stringify({ status: "canceled" }) }),
     ).rejects.toMatchObject({ status: 409 });
   });
 

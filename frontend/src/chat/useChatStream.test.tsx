@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { delay, HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 import { apiUrl } from "../api/client.ts";
-import { parseTripForm } from "../api/conversations.ts";
 import { DOMESTIC_TRIP_ID, SEED_CONVERSATION_ID } from "../mocks/fixtures.ts";
 import { mockDb } from "../mocks/mockDb.ts";
 import { server } from "../mocks/server.ts";
@@ -28,7 +27,7 @@ describe("useChatStream", () => {
     });
     expect(isSent).toBe(true);
     expect(result.current.state).toEqual({ kind: "idle", hasUpdatedPlan: false });
-    expect(mockDb.messages.at(-1)?.suggestions).toHaveLength(3);
+    expect(mockDb.messages.at(-1)?.metadata).toMatchObject({ kind: "suggestions", cards: { length: 3 } });
   });
 
   it("stale_revision_ends_in_conflict_error_with_the_draft", async () => {
@@ -45,9 +44,10 @@ describe("useChatStream", () => {
     await waitFor(() => expect(result.current.state).toEqual({ kind: "error", code: "conflict", draft: "Switch to the flight" }));
   });
 
-  it("trip_form_event_sets_has_trip_form", async () => {
-    // A reply that sends the form event and then waits, so the streaming state can be seen
-    const frames = ['event: trip_form\ndata: {"message_id":"m1","draft":{"length_days":3}}\n\n', "event: done\ndata: {}\n\n"];
+  it("metadata_event_keeps_the_message_id_and_value", async () => {
+    // A reply that sends the metadata event and then waits, so the streaming state can be seen
+    const meta = { status: "open", draft: { length_days: 3 }, trip_id: null };
+    const frames = [`event: metadata\ndata: ${JSON.stringify({ message_id: "m1", metadata: meta })}\n\n`, "event: done\ndata: {}\n\n"];
     server.use(
       http.post(apiUrl("/chat"), () => {
         const encoder = new TextEncoder();
@@ -70,7 +70,7 @@ describe("useChatStream", () => {
     act(() => {
       sent = result.current.send("tạo plan trip cho tôi");
     });
-    await waitFor(() => expect(result.current.state).toMatchObject({ kind: "streaming", hasTripForm: true }));
+    await waitFor(() => expect(result.current.state).toMatchObject({ kind: "streaming", metadata: { messageId: "m1", value: meta } }));
     await act(async () => {
       await sent;
     });
@@ -95,18 +95,5 @@ describe("useChatStream", () => {
       await result.current.send("hello");
     });
     expect(created).toBe(1);
-  });
-});
-
-describe("parseTripForm", () => {
-  it("parseTripForm_returns_null_for_broken_json", () => {
-    expect(parseTripForm("not json")).toBeNull();
-    expect(parseTripForm("[1, 2]")).toBeNull();
-    expect(parseTripForm("null")).toBeNull();
-  });
-
-  it("parseTripForm_reads_trip_id", () => {
-    const content = JSON.stringify({ origin: "Hà Nội", length_days: 3, trip_id: "abc" });
-    expect(parseTripForm(content)).toEqual({ origin: "Hà Nội", length_days: 3, trip_id: "abc" });
   });
 });

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
@@ -56,8 +55,10 @@ def create_trip(body: CreateTripBody, conn: Conn, deps: Deps) -> ApiResponse[Tri
         owner = conversations.get_conversation(conn, form.conversation_id).user_id
         if owner != body.user_id:
             raise NotFound(f"message {body.message_id}")
-        content = json.dumps({**request, "trip_id": str(trip.id)}, ensure_ascii=False)
-        if messages.close_trip_form(conn, form.id, "created_trip", content) is None:
+        if form.intent != "create_trip":
+            raise Conflict(f"message {body.message_id} is not a trip form")
+        created = {"status": "created", "draft": request, "trip_id": str(trip.id)}
+        if messages.update_open_metadata(conn, form.id, {"status": "open"}, created) is None:
             raise Conflict("This form was already used")
         conversations.clear_draft(conn, form.conversation_id)
 

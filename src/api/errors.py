@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.envelope import error_response
 from api.middleware import REQUEST_ID_HEADER
-from core.exceptions import Conflict, LimitExceeded, NotFound, QuotaExhausted
+from core.exceptions import Conflict, InvalidInput, LimitExceeded, NotFound, QuotaExhausted
 from core.logger import log_context
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,11 @@ async def handle_conflict(request: Request, exc: Exception) -> JSONResponse:
     return error_response(
         409, "conflict", str(exc) or "The request conflicts with the current state"
     )
+
+
+# InvalidInput -> 422, like a request that fails its schema
+async def handle_invalid_input(request: Request, exc: Exception) -> JSONResponse:
+    return error_response(422, "invalid_request", str(exc) or "Invalid request")
 
 
 # LimitExceeded -> 429
@@ -89,6 +94,7 @@ async def handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(NotFound, handle_not_found)
     app.add_exception_handler(Conflict, handle_conflict)
+    app.add_exception_handler(InvalidInput, handle_invalid_input)
     app.add_exception_handler(LimitExceeded, handle_limit)
     app.add_exception_handler(QuotaExhausted, handle_quota)
     app.add_exception_handler(RequestValidationError, handle_validation)

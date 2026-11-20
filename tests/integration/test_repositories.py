@@ -19,11 +19,11 @@ from db.repositories.jobs import active_job, enqueue, finish, lease_next, requeu
 from db.repositories.llm_calls import LlmCallRecord, count_today, log_call
 from db.repositories.messages import (
     add_message,
-    close_trip_form,
-    count_intent,
     count_user_messages_today,
+    find_open_questionnaire,
     get_message,
     recent_messages,
+    update_open_metadata,
 )
 from db.repositories.quota import active_block, block, count_tavily_today
 from db.repositories.research import (
@@ -228,35 +228,44 @@ def test_clear_draft_sets_request_draft_to_null(db_conn, user):
 
 def test_get_unknown_message_raises_not_found(db_conn, user):
     conversation = create_conversation(db_conn, user.id, None)
-    message = add_message(db_conn, conversation.id, "assistant", "{}", "trip_form")
+    message = add_message(db_conn, conversation.id, "assistant", "Hi", "advice")
     assert get_message(db_conn, message.id) == message
     with pytest.raises(NotFound):
         get_message(db_conn, conversation.id)
 
 
-def test_close_trip_form_moves_open_form_to_created(db_conn, user):
+def test_update_open_metadata_changes_only_a_matching_row(db_conn, user):
     conversation = create_conversation(db_conn, user.id, None)
-    form = add_message(db_conn, conversation.id, "assistant", '{"length_days": 3}', "trip_form")
-    closed = close_trip_form(db_conn, form.id, "created_trip", '{"trip_id": "x"}')
-    assert closed is not None
-    assert (closed.intent, closed.content) == ("created_trip", '{"trip_id": "x"}')
-    assert get_message(db_conn, form.id).intent == "created_trip"
+    form = add_message(
+        db_conn,
+        conversation.id,
+        "assistant",
+        "",
+        "create_trip",
+        {"status": "open", "draft": {"length_days": 3}, "trip_id": None},
+    )
+    created = {"status": "created", "draft": {"length_days": 3}, "trip_id": "x"}
+    updated = update_open_metadata(db_conn, form.id, {"status": "open"}, created)
+    assert updated is not None
+    assert updated.metadata == created
+    canceled = {"status": "canceled", "draft": {}, "trip_id": None}
+    assert update_open_metadata(db_conn, form.id, {"status": "open"}, canceled) is None
+    assert get_message(db_conn, form.id).metadata == created
 
 
-def test_close_trip_form_returns_none_when_already_closed(db_conn, user):
+def test_find_open_questionnaire_returns_the_open_card_only(db_conn, user):
     conversation = create_conversation(db_conn, user.id, None)
-    form = add_message(db_conn, conversation.id, "assistant", "{}", "trip_form")
-    assert close_trip_form(db_conn, form.id, "created_trip", "{}") is not None
-    assert close_trip_form(db_conn, form.id, "canceled_trip", None) is None
-    assert get_message(db_conn, form.id).intent == "created_trip"
-
-
-def test_close_trip_form_keeps_content_when_none_given(db_conn, user):
-    conversation = create_conversation(db_conn, user.id, None)
-    form = add_message(db_conn, conversation.id, "assistant", '{"length_days": 3}', "trip_form")
-    closed = close_trip_form(db_conn, form.id, "canceled_trip", None)
-    assert closed is not None
-    assert (closed.intent, closed.content) == ("canceled_trip", '{"length_days": 3}')
+    card = {"kind": "questionnaire", "status": "open", "step": 0, "answers": {}, "choices": {}}
+    assert find_open_questionnaire(db_conn, conversation.id) is None
+    done = add_message(
+        db_conn, conversation.id, "assistant", "", "discover", {**card, "status": "done"}
+    )
+    open_card = add_message(db_conn, conversation.id, "assistant", "", "discover", card)
+    found = find_open_questionnaire(db_conn, conversation.id)
+    assert found is not None
+    assert found.id == open_card.id != done.id
+    update_open_metadata(db_conn, open_card.id, {"status": "open"}, {**card, "status": "done"})
+    assert find_open_questionnaire(db_conn, conversation.id) is None
 
 
 def test_recent_messages_returns_last_n_oldest_first(db_conn, user):
@@ -264,12 +273,12 @@ def test_recent_messages_returns_last_n_oldest_first(db_conn, user):
     with db_conn.transaction():
         for text in ("one", "two", "three"):
             add_message(db_conn, conversation.id, "user", text)
-    add_message(db_conn, conversation.id, "assistant", "cards", "suggest", [{"name": "Hue"}])
+    cards = {"kind": "suggestions", "cards": [{"name": "Hue"}]}
+    add_message(db_conn, conversation.id, "assistant", "cards", "discover", cards)
     recent = recent_messages(db_conn, conversation.id, limit=3)
     assert [m.content for m in recent] == ["two", "three", "cards"]
-    assert recent[-1].suggestions == [{"name": "Hue"}]
+    assert recent[-1].metadata == cards
     assert count_user_messages_today(db_conn, user.id) == 3
-    assert count_intent(db_conn, conversation.id, "suggest") == 1
 
 
 def test_count_today_filters_by_purpose(db_conn, trip):

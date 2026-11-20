@@ -14,7 +14,7 @@ export const TRAVEL_STYLES = [
 ] as const;
 export const TRANSPORT_MODES = ["flight", "train", "bus", "car", "motorbike", "boat"] as const;
 export const ACTIVE_STATUSES = ["queued", "researching", "planning"] as const;
-export const CHAT_EVENT_TYPES = ["token", "plan", "suggestions", "hotels", "trip_form", "error", "done"] as const;
+export const CHAT_EVENT_TYPES = ["token", "plan", "metadata", "error", "done"] as const;
 
 export type TravelStyle = (typeof TRAVEL_STYLES)[number];
 export type TransportMode = (typeof TRANSPORT_MODES)[number];
@@ -27,19 +27,7 @@ export type ItemStatus = "planned" | "booked" | "paid";
 export type WeatherBasis = "forecast" | "typical";
 export type Leg = "outbound" | "return" | "local";
 export type TripStage = "researching" | "planning" | "validating";
-export type MessageIntent =
-  | "plan_answer"
-  | "plan_editor"
-  | "trip_research"
-  | "travel_advice"
-  | "clarification"
-  | "ask"
-  | "suggest"
-  | "answer"
-  | "trip_form"
-  | "created_trip"
-  | "canceled_trip"
-  | "hotel_options";
+export type MessageIntent = "advice" | "discover" | "booking_search" | "create_trip" | "edit_plan";
 
 export interface ErrorBody {
   code: string;
@@ -235,9 +223,6 @@ export type RequestDraft = Partial<Omit<CreateTripBody, "user_id">> & {
   length_days?: number | null;
 };
 
-// The content of a trip form message: the draft, plus the trip once it was created
-export type TripFormContent = RequestDraft & { trip_id?: string };
-
 export interface SuggestionCard {
   name: string;
   country_code: string;
@@ -261,13 +246,62 @@ export interface HotelCard {
   url: string;
 }
 
+// One ticket option from a search; the server sets url from the source
+export interface FlightCard {
+  carrier: string;
+  mode: TransportMode;
+  route: string;
+  duration_text: string;
+  price_from: number | null;
+  price_currency: string;
+  highlights: string[];
+  source_id: number;
+  url: string;
+}
+
+export type BookingKind = "hotel" | "flight";
+export interface HotelDates {
+  check_in: string;
+  check_out: string;
+}
+export interface FlightDates {
+  depart: string;
+  return: string | null;
+}
+
+// The structured part of an assistant message, by intent; see docs/api.md
+export interface AdviceMeta {
+  clarify?: boolean;
+  searched?: boolean;
+}
+export interface QuestionnaireMeta {
+  kind: "questionnaire";
+  status: "open" | "done";
+  step: number;
+  answers: RequestDraft & { notes?: string | null };
+  choices: Record<string, string | string[] | null>;
+}
+export interface SuggestionsMeta {
+  kind: "suggestions";
+  cards: SuggestionCard[];
+}
+export type BookingMeta =
+  | { kind: BookingKind; status: "need_dates" | "done"; query: string }
+  | { kind: "hotel"; status: "results"; query: string; dates: HotelDates | null; cards: HotelCard[] }
+  | { kind: "flight"; status: "results"; query: string; dates: FlightDates | null; cards: FlightCard[] };
+export interface TripFormMeta {
+  status: "open" | "created" | "canceled";
+  draft: RequestDraft;
+  trip_id: string | null;
+}
+export type MessageMetadata = AdviceMeta | QuestionnaireMeta | SuggestionsMeta | BookingMeta | TripFormMeta;
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   intent: MessageIntent | null;
-  // Destination cards when intent is suggest, hotel cards when intent is hotel_options
-  suggestions: SuggestionCard[] | HotelCard[] | null;
+  metadata: MessageMetadata | null;
   created_at: string;
 }
 
@@ -285,8 +319,6 @@ export type ConversationDetail = Conversation & { messages: Message[] };
 export type ChatEvent =
   | { type: "token"; data: { text: string } }
   | { type: "plan"; data: { plan_revision: number } }
-  | { type: "suggestions"; data: { cards: SuggestionCard[] } }
-  | { type: "hotels"; data: { cards: HotelCard[] } }
-  | { type: "trip_form"; data: { message_id: string; draft: RequestDraft } }
+  | { type: "metadata"; data: { message_id: string | null; metadata: MessageMetadata } }
   | { type: "error"; data: ErrorBody }
   | { type: "done"; data: Record<string, never> };

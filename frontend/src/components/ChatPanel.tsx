@@ -19,17 +19,22 @@ import {
 } from "lucide-react";
 import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import type { HotelCard, Message, Place, SuggestionCard as Card } from "../api/api.types.ts";
+import type { Message, Place, RequestDraft, SuggestionCard as Card } from "../api/api.types.ts";
 import { apiRequest } from "../api/client.ts";
-import { createConversation, parseTripForm, useConversation } from "../api/conversations.ts";
+import { createConversation, useConversation } from "../api/conversations.ts";
 import { useChatStream } from "../chat/useChatStream.ts";
+import { formatDay } from "../format/dates.ts";
 import { codeKey, errorKey } from "../i18n/errorKey.ts";
-import { type MessageKey, useT } from "../i18n/LanguageProvider.tsx";
+import { type MessageKey, useLanguage, useT } from "../i18n/LanguageProvider.tsx";
 import { useSession } from "../session/session.ts";
 import { ChatTripCanceled } from "./ChatTripCanceled.tsx";
 import { ChatTripForm } from "./ChatTripForm.tsx";
 import { ChatTripProgress } from "./ChatTripProgress.tsx";
-import { HotelSlider } from "./HotelSlider.tsx";
+import { BookingDates } from "./BookingDates.tsx";
+import { CardSlider } from "./CardSlider.tsx";
+import { DiscoverQuestionnaire } from "./DiscoverQuestionnaire.tsx";
+import { FlightCard } from "./FlightCard.tsx";
+import { HotelCard } from "./HotelCard.tsx";
 import { SuggestionCard } from "./SuggestionCard.tsx";
 import { BANNER, BUTTON, TITLE } from "../styles/recipes.ts";
 
@@ -55,7 +60,6 @@ const USER_BUBBLE =
   "max-w-[85%] self-end rounded-md rounded-br-[4px] bg-secondary px-4 py-3 whitespace-pre-wrap wrap-anywhere text-secondary-foreground";
 const ASSISTANT = "flex max-w-full flex-col gap-3";
 const TEXT = "whitespace-pre-wrap wrap-anywhere";
-const TRIP_FORM_INTENTS: readonly string[] = ["trip_form", "created_trip", "canceled_trip"];
 const PLAN_UPDATED = "text-sm font-medium text-primary";
 
 interface Props {
@@ -69,6 +73,7 @@ interface Props {
 // The chat thread and composer; streams replies, applies plan changes and turns cards into a prefilled form
 export function ChatPanel({ header, conversationId, trip, disabledReason, onConversationCreated }: Props) {
   const t = useT();
+  const { lang } = useLanguage();
   const session = useSession();
   const navigate = useNavigate();
   const [text, setText] = useState("");
@@ -160,27 +165,101 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
     if (thread && isPinnedRef.current) thread.scrollTop = thread.scrollHeight;
   }, [messages.length, streamedText]);
 
-  // A trip form message by its state; its content is JSON, never shown as text
-  const renderTripForm = (message: Message, id: string) => {
-    const form = parseTripForm(message.content);
-    if (form === null) return <p className={BANNER.error}>{t("chat.tripForm.broken")}</p>;
-    if (message.intent === "trip_form") return <ChatTripForm conversationId={id} message={message} />;
-    if (message.intent === "canceled_trip") return <ChatTripCanceled form={form} />;
-    return form.trip_id ? (
-      <ChatTripProgress tripId={form.trip_id} />
+  // A trip form by its status; a form whose draft is not an object shows an error line
+  const renderTripForm = (message: Message) => {
+    const meta = message.metadata;
+    const draft: unknown = meta !== null && "draft" in meta ? meta.draft : null;
+    if (meta === null || !("draft" in meta) || typeof draft !== "object" || draft === null || Array.isArray(draft)) {
+      return <p className={BANNER.error}>{t("chat.tripForm.broken")}</p>;
+    }
+    if (meta.status === "open") {
+      return conversationId === null ? null : <ChatTripForm conversationId={conversationId} messageId={message.id} draft={draft as RequestDraft} />;
+    }
+    if (meta.status === "canceled") return <ChatTripCanceled form={draft as RequestDraft} />;
+    return meta.trip_id ? (
+      <ChatTripProgress tripId={meta.trip_id} />
     ) : (
       <p className="text-sm text-muted-foreground">{t("chat.tripForm.deleted")}</p>
     );
   };
 
-  const renderCards = (cards: Card[] | null) =>
-    cards && cards.length > 0 ? (
+  const renderCards = (cards: Card[]) =>
+    cards.length > 0 ? (
       <div className="flex flex-col gap-3">
         {cards.map((card) => (
           <SuggestionCard key={`${card.name}-${card.country_code}`} card={card} isBusy={planCard.isPending} onPlan={planCard.mutate} />
         ))}
       </div>
     ) : null;
+
+  // The structured part of an assistant message, the same for a saved message and the streaming one
+  const renderMetadata = (message: Message) => {
+    if (message.intent === "create_trip") return renderTripForm(message);
+    const meta = message.metadata;
+    if (meta === null || !("kind" in meta)) return null;
+    if (meta.kind === "suggestions") return renderCards(meta.cards);
+    if (meta.kind === "questionnaire") {
+      return conversationId === null ? null : (
+        <DiscoverQuestionnaire
+          conversationId={conversationId}
+          messageId={message.id}
+          meta={meta}
+          isBusy={isStreaming}
+          onSuggest={() => void chat.send(t("questionnaire.suggestMessage"), { discover_message_id: message.id })}
+        />
+      );
+    }
+    if (meta.status !== "results") {
+      return (
+        <BookingDates
+          messageId={message.id}
+          kind={meta.kind}
+          isOpen={meta.status === "need_dates"}
+          isBusy={isStreaming}
+          defaultOrigin={conversation.data?.request_draft?.origin ?? null}
+          onSearch={(dates, origin) =>
+            void chat.send(t("booking.searchMessage"), { booking_message_id: message.id, dates, ...(origin ? { origin } : {}) })
+          }
+        />
+      );
+    }
+    if (meta.kind === "hotel") {
+      const dates = meta.dates;
+      return (
+        <CardSlider
+          labels={{ title: "hotels.title", previous: "hotels.previous", next: "hotels.next" }}
+          subtitle={dates && t("booking.hotelDates", { checkIn: formatDay(dates.check_in, lang), checkOut: formatDay(dates.check_out, lang) })}
+          items={meta.cards.map((hotel) => ({ key: `${hotel.source_id}-${hotel.name}`, node: <HotelCard hotel={hotel} /> }))}
+        />
+      );
+    }
+    const dates = meta.dates;
+    return (
+      <CardSlider
+        labels={{ title: "flights.title", previous: "flights.previous", next: "flights.next" }}
+        subtitle={
+          dates &&
+          (dates.return
+            ? t("booking.flightDatesReturn", { depart: formatDay(dates.depart, lang), return: formatDay(dates.return, lang) })
+            : t("booking.flightDates", { depart: formatDay(dates.depart, lang) }))
+        }
+        items={meta.cards.map((flight) => ({ key: `${flight.source_id}-${flight.carrier}-${flight.route}`, node: <FlightCard flight={flight} /> }))}
+      />
+    );
+  };
+
+  // The streaming reply as a message, so renderMetadata draws it like a saved one
+  const streamed: Message | null =
+    state.kind === "streaming"
+      ? {
+          id: state.metadata?.messageId ?? "streaming",
+          role: "assistant",
+          content: state.text,
+          intent: state.metadata && "draft" in state.metadata.value ? "create_trip" : null,
+          metadata: state.metadata?.value ?? null,
+          created_at: "",
+        }
+      : null;
 
   return (
     <div
@@ -254,40 +333,31 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
             ) : (
               <li key={message.id} className={ASSISTANT}>
                 <span className="sr-only">{t("chat.assistant")}: </span>
-                {conversationId !== null && message.intent !== null && TRIP_FORM_INTENTS.includes(message.intent) ? (
-                  renderTripForm(message, conversationId)
-                ) : (
-                  message.content && <p className={TEXT}>{message.content}</p>
-                )}
-                {message.intent === "hotel_options" ? (
-                  <HotelSlider cards={message.suggestions as HotelCard[] | null} />
-                ) : (
-                  renderCards(message.suggestions as Card[] | null)
-                )}
+                {message.content && <p className={TEXT}>{message.content}</p>}
+                {renderMetadata(message)}
                 {message.id === lastAssistant?.id && state.kind === "idle" && state.hasUpdatedPlan && (
                   <p className={PLAN_UPDATED}>{t("chat.planUpdated")}</p>
                 )}
               </li>
             ),
           )}
-          {state.kind === "streaming" && (
+          {state.kind === "streaming" && streamed !== null && (
             <>
               <li className={USER_BUBBLE}>
                 <span className="sr-only">{t("chat.you")}: </span>
                 {state.prompt}
               </li>
-              {!state.hasTripForm && (
-                <li className={ASSISTANT}>
-                  <span className="sr-only">{t("chat.assistant")}: </span>
+              <li className={ASSISTANT}>
+                <span className="sr-only">{t("chat.assistant")}: </span>
+                {(state.text || state.metadata === null) && (
                   <p className={TEXT}>
                     {state.text}
                     <span className="ml-0.5 inline-block h-4 w-2 bg-muted-foreground align-[-2px]" aria-hidden="true" />
                   </p>
-                  {renderCards(state.cards)}
-                  <HotelSlider cards={state.hotels} />
-                  {state.hasUpdatedPlan && <p className={PLAN_UPDATED}>{t("chat.planUpdated")}</p>}
-                </li>
-              )}
+                )}
+                {renderMetadata(streamed)}
+                {state.hasUpdatedPlan && <p className={PLAN_UPDATED}>{t("chat.planUpdated")}</p>}
+              </li>
             </>
           )}
         </ol>

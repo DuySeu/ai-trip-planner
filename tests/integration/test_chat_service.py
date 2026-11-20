@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -12,18 +12,19 @@ import httpx
 import pytest
 from psycopg_pool import ConnectionPool
 
-from chat.chat_service import ChatDeps, prepare_message, stream_reply
+from chat.chat_service import ChatDeps, FollowUp, prepare_message, stream_reply
 from chat.events import ChatEvent, to_sse
 from core.constants import ModelId
-from core.exceptions import Conflict, NotFound, PlanConflict
+from core.exceptions import Conflict, InvalidInput, NotFound, PlanConflict
 from core.settings import load_settings
 from db.call_sink import DbCallSink
-from db.repositories.conversations import create_conversation
+from db.repositories.conversations import create_conversation, get_conversation, save_draft
 from db.repositories.jobs import active_job, enqueue
-from db.repositories.messages import recent_messages
+from db.repositories.messages import add_message, get_message, recent_messages
 from db.repositories.research import sources_for_trip
 from db.repositories.trips import TripRow, create_trip, get_trip, save_plan
 from db.repositories.users import UserRow, claim_user
+from domain.booking import BookingDates
 from models.model_router import ModelRouter
 from service.tavily.search import SearchHit
 from tests.fakes import FakeProvider, FakeSearch, FakeSink
@@ -109,10 +110,17 @@ class Rig:
         content: str,
         trip: TripRow | None = None,
         revision: int | None = None,
+        follow_up: FollowUp | None = None,
     ) -> list[ChatEvent]:
         with self.pool.connection() as conn:
             turn = prepare_message(
-                conn, conversation_id, content, trip.id if trip else None, revision
+                conn,
+                conversation_id,
+                content,
+                trip.id if trip else None,
+                revision,
+                follow_up=follow_up,
+                today=NOW.date(),
             )
         return list(stream_reply(turn, self.deps))
 
@@ -144,7 +152,7 @@ def spoken(events: Sequence[ChatEvent]) -> str:
 def test_question_streams_answer_and_saves_both_messages(
     db_pool, db_conn, conversation, ready_trip
 ):
-    rig = Rig(db_pool, [route("plan_answer"), ANSWER])
+    rig = Rig(db_pool, [route("advice"), ANSWER])
     events = rig.say(conversation.id, "Where is the stay?", ready_trip, ready_trip.plan_revision)
 
     assert spoken(events) == ANSWER
@@ -152,25 +160,39 @@ def test_question_streams_answer_and_saves_both_messages(
     saved = recent_messages(db_conn, conversation.id, 5)
     assert [(m.role, m.content, m.intent) for m in saved] == [
         ("user", "Where is the stay?", None),
-        ("assistant", ANSWER, "plan_answer"),
+        ("assistant", ANSWER, "advice"),
     ]
+    assert saved[-1].metadata is None
     # The answer call saw the plan with its ids and the question
     content = rig.provider.calls[1][0][0]["content"]
     assert "it_3" in content and "Where is the stay?" in content
 
 
 def test_question_without_open_trip_gets_travel_advice(db_pool, db_conn, conversation):
-    rig = Rig(db_pool, [route("plan_answer"), "Bring a light jacket."])
+    rig = Rig(db_pool, [route("advice"), "Bring a light jacket."])
     events = rig.say(conversation.id, "What should I pack for Sapa?")
     assert spoken(events) == "Bring a light jacket."
-    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "travel_advice"
+    assert "<plan>" not in rig.provider.calls[1][0][0]["content"]
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert (last.intent, last.metadata) == ("advice", None)
+
+
+def test_unknown_agent_from_router_falls_back_to_advice(db_pool, db_conn, conversation, caplog):
+    # An agent of the old catalog fails the check, the repair names it again, the router gives up
+    old = route("discover_ask")
+    rig = Rig(db_pool, [old, old, "Try Hue in spring."])
+    with caplog.at_level(logging.INFO, logger="chat.chat_service"):
+        events = rig.say(conversation.id, "Where should I go?")
+    assert spoken(events) == "Try Hue in spring."
+    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "advice"
+    assert "chat flow: advice (classifier picked none, fallback)" in caplog.text
 
 
 def test_routing_logs_the_chosen_flow_and_the_reason(db_pool, conversation, caplog):
-    rig = Rig(db_pool, [route("plan_answer"), "Bring a light jacket."])
+    rig = Rig(db_pool, [route("web_lookup"), "Bring a light jacket."])
     with caplog.at_level(logging.INFO, logger="chat.chat_service"):
         rig.say(conversation.id, "What should I pack for Sapa?")
-    assert "chat flow: travel_advice (classifier picked plan_answer, routed): fits" in caplog.text
+    assert "chat flow: web_lookup (classifier picked web_lookup, routed): fits" in caplog.text
 
 
 def test_trip_of_another_user_raises_not_found_before_streaming(
@@ -195,63 +217,21 @@ def test_trip_without_plan_raises_conflict_before_streaming(db_pool, db_conn, us
 
 
 def test_edit_without_open_trip_asks_to_open_it(db_pool, db_conn, conversation):
-    rig = Rig(db_pool, [route("plan_editor")])
+    rig = Rig(db_pool, [route("edit_plan")])
     events = rig.say(conversation.id, "Move lunch to 13:00")
     assert "Open the trip" in spoken(events)
     assert len(rig.provider.calls) == 1
-    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "plan_editor"
+    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "edit_plan"
 
 
 def test_edit_without_open_trip_answers_a_vietnamese_message_in_vietnamese(db_pool, conversation):
-    rig = Rig(db_pool, [route("plan_editor")])
+    rig = Rig(db_pool, [route("edit_plan")])
     events = rig.say(conversation.id, "Đổi bữa trưa sang 13:00")
     assert "Hãy mở chuyến đi" in spoken(events)
 
 
-def test_classifier_chooses_discover_ask_without_a_second_decision_call(
-    db_pool, db_conn, conversation
-):
-    turn = json.dumps(
-        {"reply": "When do you want to travel?", "request_draft": {"origin": "Hanoi"}}
-    )
-    rig = Rig(db_pool, [route("discover_ask"), turn])
-    events = rig.say(conversation.id, "I do not know where to go")
-    assert spoken(events) == "When do you want to travel?"
-    assert events[-1].type == "done"
-    assert len(rig.provider.calls) == 2
-    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "ask"
-
-
-def test_discover_suggest_searches_the_router_task_and_makes_two_calls_in_all(
-    db_pool, db_conn, conversation
-):
-    task = "warm beach trips in December from Hanoi"
-    card = {
-        "name": "Krabi",
-        "country_code": "TH",
-        "why": "Dry in December.",
-        "length_days": 4,
-        "est_cost_per_person_vnd": "9000000",
-        "source_ids": [1],
-    }
-    answer = json.dumps({"reply": "I assume two travelers.", "request_draft": {}, "cards": [card]})
-    rig = Rig(db_pool, [route("discover_suggest", task), answer])
-    events = rig.say(conversation.id, "Warm beach in December, no idea where")
-    assert rig.search.calls[0] == task and len(rig.provider.calls) == 2
-    assert [e.type for e in events][-2:] == ["suggestions", "done"]
-    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "suggest"
-
-
-def test_discover_answer_makes_two_calls_in_all_and_no_search(db_pool, db_conn, conversation):
-    turn = json.dumps({"reply": "December is dry in the south.", "request_draft": {}})
-    rig = Rig(db_pool, [route("discover_answer"), turn])
-    rig.say(conversation.id, "Is December a good month for Thailand?")
-    assert rig.search.calls == [] and len(rig.provider.calls) == 2
-    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "answer"
-
-
 def test_llm_calls_carry_the_user_message_id(db_pool, db_conn, conversation, ready_trip):
-    rig = Rig(db_pool, [route("plan_answer"), ANSWER], sink=DbCallSink(db_pool))
+    rig = Rig(db_pool, [route("advice"), ANSWER], sink=DbCallSink(db_pool))
     rig.say(conversation.id, "Where is the stay?", ready_trip, ready_trip.plan_revision)
     user_message = recent_messages(db_conn, conversation.id, 2)[0]
     rows = db_conn.execute(
@@ -264,7 +244,7 @@ def test_llm_calls_carry_the_user_message_id(db_pool, db_conn, conversation, rea
 
 
 def test_edit_overwrites_plan_before_any_token(db_pool, db_conn, conversation, ready_trip):
-    rig = Rig(db_pool, [route("plan_editor"), RENAME])
+    rig = Rig(db_pool, [route("edit_plan"), RENAME])
     events = rig.say(conversation.id, "Rename the walk", ready_trip, ready_trip.plan_revision)
 
     assert events[0] == ChatEvent("plan", {"plan_revision": ready_trip.plan_revision + 1})
@@ -282,7 +262,7 @@ def test_edit_that_cannot_be_repaired_is_a_polite_reply_and_saves_no_plan(
     db_pool, db_conn, conversation, ready_trip
 ):
     bad = edit_answer({"op": "remove_item", "item_id": "it_999"})
-    rig = Rig(db_pool, [route("plan_editor"), bad, bad])
+    rig = Rig(db_pool, [route("edit_plan"), bad, bad])
     events = rig.say(conversation.id, "Drop it_999", ready_trip, ready_trip.plan_revision)
     assert [e.type for e in events] == ["token"] * (len(events) - 1) + ["done"]
     assert "could not turn that" in spoken(events)
@@ -293,7 +273,7 @@ def test_edit_while_job_active_yields_conflict_error_event(
     db_pool, db_conn, conversation, ready_trip
 ):
     enqueue(db_conn, ready_trip.id)
-    rig = Rig(db_pool, [route("plan_editor")])
+    rig = Rig(db_pool, [route("edit_plan")])
     events = rig.say(conversation.id, "Rename the walk", ready_trip, ready_trip.plan_revision)
     assert [e.type for e in events] == ["error", "done"]
     assert events[0].data["code"] == "conflict"
@@ -303,7 +283,7 @@ def test_edit_while_job_active_yields_conflict_error_event(
 
 
 def test_update_request_queues_replan_job(db_pool, db_conn, conversation, ready_trip):
-    rig = Rig(db_pool, [route("plan_editor"), CHANGE_TRAVELERS])
+    rig = Rig(db_pool, [route("edit_plan"), CHANGE_TRAVELERS])
     events = rig.say(conversation.id, "We are 3 people", ready_trip, ready_trip.plan_revision)
 
     assert "plan" not in [e.type for e in events]
@@ -320,7 +300,7 @@ def test_update_request_with_invalid_dates_queues_nothing(
     early = edit_answer(
         {"op": "update_request", "changes": {"start_date": "2026-01-01", "end_date": "2026-01-03"}}
     )
-    rig = Rig(db_pool, [route("plan_editor"), early])
+    rig = Rig(db_pool, [route("edit_plan"), early])
     events = rig.say(conversation.id, "Go in January", ready_trip, ready_trip.plan_revision)
     assert "cannot make that change" in spoken(events)
     assert active_job(db_conn, ready_trip.id) is None
@@ -328,7 +308,7 @@ def test_update_request_with_invalid_dates_queues_nothing(
 
 def test_research_searches_once_with_router_task_text(db_pool, db_conn, conversation, ready_trip):
     task = "train or bus Da Lat to Nha Trang, 4 people, 21 Dec"
-    rig = Rig(db_pool, [route("trip_research", task), "The night bus costs about 350000 VND."])
+    rig = Rig(db_pool, [route("web_lookup", task), "The night bus costs about 350000 VND."])
     events = rig.say(conversation.id, "Bus or train to Nha Trang?", ready_trip, 1)
 
     assert rig.search.calls == [task]
@@ -337,18 +317,19 @@ def test_research_searches_once_with_router_task_text(db_pool, db_conn, conversa
     saved = [s for s in sources_for_trip(db_conn, ready_trip.id) if s.kind == "chat"]
     assert [(s.title, s.url) for s in saved] == [("Train guide", "https://example.com/t")]
     assert "Train guide" in rig.provider.calls[1][0][0]["content"]
-    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "trip_research"
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert (last.intent, last.metadata) == ("advice", {"searched": True})
 
 
 def test_research_searches_again_only_when_first_search_is_empty(db_pool, conversation):
     search = FakeSearch({"cheap stay": []}, default=HITS)
-    rig = Rig(db_pool, [route("trip_research", "cheap stay"), "Try the old town."], search)
+    rig = Rig(db_pool, [route("web_lookup", "cheap stay"), "Try the old town."], search)
     rig.say(conversation.id, "Cheap stay?")
     assert search.calls == ["cheap stay", "cheap stay travel guide"]
 
 
 def test_research_without_trip_keeps_hits_on_the_conversation(db_pool, db_conn, conversation):
-    rig = Rig(db_pool, [route("trip_research", "visa for Japan"), "Check the embassy."])
+    rig = Rig(db_pool, [route("web_lookup", "visa for Japan"), "Check the embassy."])
     rig.say(conversation.id, "Visa for Japan?")
     row = db_conn.execute("SELECT kind, trip_id, conversation_id FROM research_results").fetchall()
     assert row == [("chat", None, conversation.id)]
@@ -368,7 +349,14 @@ def hotel_answer(reply: str, *cards: dict[str, Any]) -> str:
     return json.dumps({"reply": reply, "cards": list(cards)})
 
 
-def test_hotel_question_searches_booking_sites_and_streams_cards(db_pool, db_conn, conversation):
+DRAFT_DATES = {"start_date": "2026-12-20", "end_date": "2026-12-23"}
+STAY = {"check_in": "2026-12-20", "check_out": "2026-12-23"}
+
+
+def test_hotel_question_with_dates_streams_cards_in_a_metadata_event(
+    db_pool, db_conn, conversation
+):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
     task = "khách sạn 4 sao Hải Phòng giá mỗi đêm"
     search = FakeSearch(default=HOTEL_HITS)
     answer = hotel_answer(
@@ -383,50 +371,300 @@ def test_hotel_question_searches_booking_sites_and_streams_cards(db_pool, db_con
         },
         {"name": "Made up", "source_id": 99},
     )
-    rig = Rig(db_pool, [route("hotel_options", task), answer], search)
+    rig = Rig(db_pool, [route("hotel_search", task), answer], search)
     events = rig.say(conversation.id, HOTEL_QUESTION)
 
-    assert (search.calls, search.tasks) == ([task], ["accommodation"])
+    assert (search.calls, search.tasks) == ([f"{task} 12/2026"], ["accommodation"])
     assert spoken(events) == "Giá tham khảo từ các trang đặt phòng."
-    assert [e.type for e in events][-2:] == ["hotels", "done"]
-    cards = events[-2].data["cards"]
-    assert [(c["name"], c["url"]) for c in cards] == [
+    assert [e.type for e in events][-2:] == ["metadata", "done"]
+    assert events[-2].data["message_id"] is None
+    meta = events[-2].data["metadata"]
+    assert [(c["name"], c["url"]) for c in meta["cards"]] == [
         ("Mercure", "https://www.booking.com/hotel/vn/mercure.html"),
         ("The Light", "https://www.agoda.com/the-light"),
     ]
-    assert "Mercure Hai Phong" in rig.provider.calls[1][0][0]["content"]
+    assert (meta["kind"], meta["status"], meta["query"], meta["dates"]) == (
+        "hotel",
+        "results",
+        task,
+        STAY,
+    )
+    prompt = rig.provider.calls[1][0][0]["content"]
+    assert "Mercure Hai Phong" in prompt and "check-in 2026-12-20" in prompt
     last = recent_messages(db_conn, conversation.id, 2)[-1]
-    assert (last.intent, last.content, last.suggestions) == (
-        "hotel_options",
+    assert (last.intent, last.content, last.metadata) == (
+        "booking_search",
         "Giá tham khảo từ các trang đặt phòng.",
-        cards,
+        meta,
     )
     row = db_conn.execute("SELECT DISTINCT kind, conversation_id FROM research_results").fetchall()
     assert row == [("accommodation", conversation.id)]
 
 
-def test_hotel_question_without_hits_answers_in_text_only(db_pool, db_conn, conversation):
+def test_hotel_question_takes_the_open_trip_dates(db_pool, db_conn, conversation, ready_trip):
+    answer = hotel_answer("Some options.", {"name": "Mercure", "source_id": 1})
+    rig = Rig(db_pool, [route("hotel_search", "hotel"), answer], FakeSearch(default=HOTEL_HITS))
+    events = rig.say(conversation.id, HOTEL_QUESTION, ready_trip, ready_trip.plan_revision)
+    assert events[-2].data["metadata"]["dates"] == STAY
+
+
+def test_hotel_question_without_hits_saves_empty_cards(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
     search = FakeSearch(default=[])
     answer = hotel_answer("Mình chưa tìm được khách sạn nào trên các trang đặt phòng.")
-    rig = Rig(db_pool, [route("hotel_options", "hotel"), answer], search)
+    rig = Rig(db_pool, [route("hotel_search", "hotel"), answer], search)
     events = rig.say(conversation.id, HOTEL_QUESTION)
 
-    assert "hotels" not in [e.type for e in events]
+    assert events[-2].data["metadata"]["cards"] == []
     assert "<search_results>\nnone\n</search_results>" in rig.provider.calls[1][0][0]["content"]
     last = recent_messages(db_conn, conversation.id, 2)[-1]
-    assert (last.intent, last.suggestions) == ("hotel_options", None)
+    assert last.intent == "booking_search"
+    assert last.metadata is not None and last.metadata["cards"] == []
 
 
-def test_hotel_cards_with_unknown_sources_only_give_no_slider(db_pool, db_conn, conversation):
+def test_hotel_cards_with_unknown_sources_only_give_no_cards(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
     answer = hotel_answer("Some options.", {"name": "Made up", "source_id": 99})
-    rig = Rig(db_pool, [route("hotel_options", "hotel"), answer], FakeSearch(default=HOTEL_HITS))
+    rig = Rig(db_pool, [route("hotel_search", "hotel"), answer], FakeSearch(default=HOTEL_HITS))
+    rig.say(conversation.id, HOTEL_QUESTION)
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert last.metadata is not None and last.metadata["cards"] == []
+
+
+def test_hotel_question_with_past_draft_dates_asks_for_new_dates(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, {"start_date": "2026-11-01", "end_date": "2026-11-03"})
+    search = FakeSearch(default=HOTEL_HITS)
+    rig = Rig(db_pool, [route("hotel_search", "hotel Hai Phong")], search)
+    rig.say(conversation.id, HOTEL_QUESTION)
+    assert search.calls == []
+    card = recent_messages(db_conn, conversation.id, 1)[-1]
+    assert card.metadata is not None and card.metadata["status"] == "need_dates"
+
+
+def test_hotel_question_without_dates_saves_a_need_dates_card(db_pool, db_conn, conversation):
+    search = FakeSearch(default=HOTEL_HITS)
+    rig = Rig(db_pool, [route("hotel_search", "khách sạn Hải Phòng")], search)
     events = rig.say(conversation.id, HOTEL_QUESTION)
 
-    assert "hotels" not in [e.type for e in events]
-    assert recent_messages(db_conn, conversation.id, 2)[-1].suggestions is None
+    assert search.calls == [] and len(rig.provider.calls) == 1
+    card = recent_messages(db_conn, conversation.id, 1)[-1]
+    assert card.intent == "booking_search"
+    assert card.metadata == {
+        "kind": "hotel",
+        "status": "need_dates",
+        "query": "khách sạn Hải Phòng",
+    }
+    assert spoken(events) == card.content == "Bạn định nhận phòng và trả phòng ngày nào?"
+    assert [e.type for e in events][-2:] == ["metadata", "done"]
+    assert events[-2].data == {"message_id": str(card.id), "metadata": card.metadata}
 
 
-def test_clarification_is_streamed_and_saved(db_pool, db_conn, conversation):
+# A booking card waiting for dates, as the router turn saves it
+def need_dates(db_conn, conversation, kind: str = "hotel", query: str = "hotel Hai Phong") -> Any:
+    meta = {"kind": kind, "status": "need_dates", "query": query}
+    return add_message(
+        db_conn, conversation.id, "assistant", "Which dates?", "booking_search", meta
+    )
+
+
+def test_booking_follow_up_searches_with_the_chosen_dates_and_closes_the_card(
+    db_pool, db_conn, conversation
+):
+    card = need_dates(db_conn, conversation)
+    answer = hotel_answer("Prices from booking sites.", {"name": "Mercure", "source_id": 1})
+    search = FakeSearch(default=HOTEL_HITS)
+    rig = Rig(db_pool, [answer], search)
+    dates = BookingDates(check_in=date(2026, 12, 20), check_out=date(2026, 12, 23))
+    events = rig.say(
+        conversation.id, "Search with these dates", follow_up=FollowUp(card.id, "booking", dates)
+    )
+
+    assert len(rig.provider.calls) == 1  # no router call
+    assert search.calls == ["hotel Hai Phong 12/2026"]
+    assert "check-in 2026-12-20" in rig.provider.calls[0][0][0]["content"]
+    assert get_message(db_conn, card.id).metadata == {
+        "kind": "hotel",
+        "status": "done",
+        "query": "hotel Hai Phong",
+    }
+    last = recent_messages(db_conn, conversation.id, 1)[-1]
+    assert last.metadata is not None
+    assert (last.metadata["status"], last.metadata["dates"]) == ("results", STAY)
+    assert [c["name"] for c in events[-2].data["metadata"]["cards"]] == ["Mercure"]
+    assert get_conversation(db_conn, conversation.id).request_draft == DRAFT_DATES
+
+
+def test_booking_follow_up_keeps_dates_the_draft_already_has(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, {"start_date": "2027-01-05", "origin": "Huế"})
+    card = need_dates(db_conn, conversation)
+    rig = Rig(db_pool, [hotel_answer("Ok.")], FakeSearch(default=[]))
+    dates = BookingDates(check_in=date(2026, 12, 20), check_out=date(2026, 12, 23))
+    rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates))
+    draft = get_conversation(db_conn, conversation.id).request_draft
+    assert draft == {"start_date": "2027-01-05", "origin": "Huế"}
+
+
+@pytest.mark.parametrize(
+    ("check_in", "check_out"),
+    [
+        (date(2026, 11, 16), date(2026, 11, 20)),  # in the past
+        (date(2026, 12, 20), date(2026, 12, 20)),  # check-out not after check-in
+        (date(2026, 12, 1), date(2027, 1, 1)),  # 31 nights
+    ],
+)
+def test_booking_follow_up_with_bad_dates_is_rejected_before_search(
+    db_pool, db_conn, conversation, check_in, check_out
+):
+    card = need_dates(db_conn, conversation)
+    rig = Rig(db_pool, [], FakeSearch(default=HOTEL_HITS))
+    dates = BookingDates(check_in=check_in, check_out=check_out)
+    with pytest.raises(InvalidInput):
+        rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates))
+    assert rig.search.calls == []
+    meta = get_message(db_conn, card.id).metadata
+    assert meta is not None and meta["status"] == "need_dates"
+    assert recent_messages(db_conn, conversation.id, 1)[-1].id == card.id
+
+
+def test_second_booking_follow_up_on_the_same_card_conflicts(db_pool, db_conn, conversation):
+    card = need_dates(db_conn, conversation)
+    rig = Rig(db_pool, [hotel_answer("Ok.")], FakeSearch(default=[]))
+    follow_up = FollowUp(
+        card.id, "booking", BookingDates(check_in=date(2026, 12, 20), check_out=date(2026, 12, 22))
+    )
+    rig.say(conversation.id, "Search", follow_up=follow_up)
+    with pytest.raises(Conflict):
+        rig.say(conversation.id, "Search", follow_up=follow_up)
+
+
+def test_booking_follow_up_closes_the_card_before_the_stream_so_a_second_press_saves_nothing(
+    db_pool, db_conn, conversation
+):
+    card = need_dates(db_conn, conversation)
+    follow_up = FollowUp(
+        card.id, "booking", BookingDates(check_in=date(2026, 12, 20), check_out=date(2026, 12, 22))
+    )
+    with db_pool.connection() as conn:
+        prepare_message(
+            conn, conversation.id, "Search", None, None, follow_up=follow_up, today=NOW.date()
+        )
+    meta = get_message(db_conn, card.id).metadata
+    assert meta is not None and meta["status"] == "done"
+    with db_pool.connection() as conn, pytest.raises(Conflict):
+        prepare_message(
+            conn, conversation.id, "Search", None, None, follow_up=follow_up, today=NOW.date()
+        )
+    roles = [m.role for m in recent_messages(db_conn, conversation.id, 5)]
+    assert roles == ["assistant", "user"]
+
+
+def test_booking_follow_up_reopens_the_card_when_the_model_fails(db_pool, db_conn, conversation):
+    card = need_dates(db_conn, conversation)
+    rig = Rig(db_pool, [httpx.ConnectError("down")], FakeSearch(default=[]))
+    dates = BookingDates(check_in=date(2026, 12, 20), check_out=date(2026, 12, 22))
+    events = rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates))
+    assert [e.data.get("code") for e in events if e.type == "error"] == ["llm_unavailable"]
+    assert get_message(db_conn, card.id).metadata == card.metadata
+
+
+def test_booking_follow_up_on_a_questionnaire_conflicts(db_pool, db_conn, conversation):
+    card = add_message(
+        db_conn,
+        conversation.id,
+        "assistant",
+        "",
+        "discover",
+        {"kind": "questionnaire", "status": "open", "step": 0, "answers": {}, "choices": {}},
+    )
+    dates = BookingDates(check_in=date(2026, 12, 20), check_out=date(2026, 12, 22))
+    with pytest.raises(Conflict):
+        Rig(db_pool, []).say(
+            conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates)
+        )
+
+
+FLIGHT_HITS = [
+    SearchHit("Vietjet Hà Nội Đà Nẵng", "https://www.traveloka.com/vj", "From 890,000 VND"),
+    SearchHit("Vietnam Airlines HAN-DAD", "https://www.skyscanner.com/vn", "Daily flights"),
+]
+
+
+def test_flight_question_searches_transport_sites_and_streams_flight_cards(
+    db_pool, db_conn, conversation
+):
+    save_draft(db_conn, conversation.id, {**DRAFT_DATES, "origin": "Hà Nội"})
+    task = "vé máy bay Hà Nội Đà Nẵng giá"
+    answer = json.dumps(
+        {
+            "reply": "Vé tham khảo từ các trang bán vé.",
+            "cards": [
+                {"carrier": "Vietnam Airlines", "route": "Hà Nội - Đà Nẵng", "source_id": 2},
+                {
+                    "carrier": "Vietjet",
+                    "route": "Hà Nội - Đà Nẵng",
+                    "price_from": "890000",
+                    "source_id": 1,
+                },
+                {"carrier": "Made up", "route": "x - y", "source_id": 99},
+            ],
+        }
+    )
+    search = FakeSearch(default=FLIGHT_HITS)
+    rig = Rig(db_pool, [route("flight_search", task), answer], search)
+    events = rig.say(conversation.id, "vé máy bay Hà Nội đi Đà Nẵng bao nhiêu")
+
+    assert (search.calls, search.tasks) == ([f"{task} 12/2026"], ["transport"])
+    assert (
+        "depart 2026-12-20, return 2026-12-23, from Hà Nội"
+        in rig.provider.calls[1][0][0]["content"]
+    )
+    meta = events[-2].data["metadata"]
+    assert (meta["kind"], meta["status"], meta["dates"]) == (
+        "flight",
+        "results",
+        {"depart": "2026-12-20", "return": "2026-12-23"},
+    )
+    assert [(c["carrier"], c["url"]) for c in meta["cards"]] == [
+        ("Vietjet", "https://www.traveloka.com/vj"),
+        ("Vietnam Airlines", "https://www.skyscanner.com/vn"),
+    ]
+    rows = db_conn.execute("SELECT DISTINCT kind FROM research_results").fetchall()
+    assert rows == [("transport",)]
+    assert recent_messages(db_conn, conversation.id, 1)[-1].metadata == meta
+
+
+def test_flight_question_without_origin_asks_for_it(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
+    rig = Rig(
+        db_pool, [route("flight_search", "flights to Da Nang")], FakeSearch(default=FLIGHT_HITS)
+    )
+    events = rig.say(conversation.id, "Flights to Da Nang?")
+    assert rig.search.calls == []
+    assert spoken(events) == "When do you want to travel?"
+    assert events[-2].data["metadata"] == {
+        "kind": "flight",
+        "status": "need_dates",
+        "query": "flights to Da Nang",
+    }
+
+
+def test_flight_follow_up_needs_an_origin_and_takes_it_into_the_draft(
+    db_pool, db_conn, conversation
+):
+    card = need_dates(db_conn, conversation, "flight", "flights to Da Nang")
+    dates = BookingDates(depart=date(2026, 12, 20))
+    rig = Rig(db_pool, [json.dumps({"reply": "Ok.", "cards": []})], FakeSearch(default=[]))
+    with pytest.raises(InvalidInput):
+        rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates))
+    rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates, "Hà Nội"))
+    assert get_conversation(db_conn, conversation.id).request_draft == {
+        "start_date": "2026-12-20",
+        "origin": "Hà Nội",
+    }
+    assert "from Hà Nội" in rig.provider.calls[0][0][0]["content"]
+
+
+def test_router_clarification_is_advice_with_clarify_flag(db_pool, db_conn, conversation):
     ask = json.dumps(
         {
             "status": "needs_clarification",
@@ -440,13 +678,14 @@ def test_clarification_is_streamed_and_saved(db_pool, db_conn, conversation):
     rig = Rig(db_pool, [ask])
     events = rig.say(conversation.id, "move it")
     assert spoken(events) == "Which day do you mean?"
-    assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "clarification"
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert (last.intent, last.metadata) == ("advice", {"clarify": True})
 
 
 def test_closing_stream_after_first_token_still_saves_assistant_message(
     db_pool, db_conn, conversation, ready_trip
 ):
-    rig = Rig(db_pool, [route("plan_answer"), ANSWER])
+    rig = Rig(db_pool, [route("advice"), ANSWER])
     with db_pool.connection() as conn:
         turn = prepare_message(conn, conversation.id, "Where?", ready_trip.id, 1)
     events = stream_reply(turn, rig.deps)
@@ -459,7 +698,7 @@ def test_closing_stream_after_first_token_still_saves_assistant_message(
 def test_closing_stream_after_an_applied_edit_keeps_the_plan_and_the_text_so_far(
     db_pool, db_conn, conversation, ready_trip
 ):
-    rig = Rig(db_pool, [route("plan_editor"), RENAME])
+    rig = Rig(db_pool, [route("edit_plan"), RENAME])
     with db_pool.connection() as conn:
         turn = prepare_message(conn, conversation.id, "Rename the walk", ready_trip.id, 1)
     events = stream_reply(turn, rig.deps)
@@ -473,7 +712,7 @@ def test_closing_stream_after_an_applied_edit_keeps_the_plan_and_the_text_so_far
     assert (last.role, last.content, last.intent) == (
         "assistant",
         first.data["text"],
-        "plan_editor",
+        "edit_plan",
     )
 
 
@@ -500,7 +739,7 @@ def test_no_database_connection_is_held_while_waiting_for_the_model(
     db_pool, db_conn, conversation, ready_trip
 ):
     db_pool.wait()
-    watcher = Watcher([route("plan_answer"), ANSWER], db_pool)
+    watcher = Watcher([route("advice"), ANSWER], db_pool)
     rig = Rig(db_pool, [], provider=watcher)
     with db_pool.connection() as conn:
         turn = prepare_message(conn, conversation.id, "Where?", ready_trip.id, 1)

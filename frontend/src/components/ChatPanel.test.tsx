@@ -2,9 +2,11 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 import { apiUrl } from "../api/client.ts";
-import { DOMESTIC_TRIP_ID, SEED_CONVERSATION_ID } from "../mocks/fixtures.ts";
+import type { Message } from "../api/api.types.ts";
+import { DOMESTIC_TRIP_ID, HOTEL_CARDS, SEED_CONVERSATION_ID } from "../mocks/fixtures.ts";
 import { mockDb } from "../mocks/mockDb.ts";
 import { server } from "../mocks/server.ts";
+import { addDays, todayInVietnam } from "../format/dates.ts";
 import { renderApp } from "../test/renderApp.tsx";
 
 const composer = () => screen.getByRole("textbox", { name: "Message" });
@@ -16,18 +18,39 @@ async function askToPlan(user: ReturnType<typeof renderApp>["user"]) {
   await screen.findByRole("combobox", { name: "Destination" });
 }
 
-// Add a saved assistant message to the seeded conversation
-function addMessage(intent: "trip_form" | "created_trip" | "canceled_trip", content: string) {
+// Add a saved assistant message to the seeded conversation; metadata is unknown so a broken row can be stored
+function addMessage(intent: Message["intent"], metadata: unknown, content = "") {
   mockDb.messages.push({
     id: crypto.randomUUID(),
     conversation_id: SEED_CONVERSATION_ID,
     role: "assistant",
     content,
     intent,
-    suggestions: null,
+    metadata: metadata as Message["metadata"],
     created_at: new Date().toISOString(),
   });
 }
+
+// Record the JSON bodies of POST /chat; call stop() at the end of the test
+function watchChatBodies() {
+  const bodies: Record<string, unknown>[] = [];
+  server.events.on("request:start", ({ request }) => {
+    if (request.method === "POST" && new URL(request.url).pathname.endsWith("/chat")) {
+      void request.clone().json().then((body) => bodies.push(body as Record<string, unknown>));
+    }
+  });
+  return { bodies, stop: () => server.events.removeAllListeners() };
+}
+
+// Open a fresh chat, ask for ideas and wait for the questionnaire card at question 1
+async function openQuestionnaire(user: ReturnType<typeof renderApp>["user"]) {
+  await screen.findByRole("heading", { name: "Where would you like to go?" });
+  await user.type(composer(), "Where should I go?{Enter}");
+  return screen.findByRole("region", { name: "A few questions about your trip" });
+}
+
+// The saved questionnaire card of the newest conversation
+const savedCard = () => mockDb.messages.findLast((m) => m.metadata !== null && "kind" in m.metadata && m.metadata.kind === "questionnaire");
 
 describe("ChatPanel", () => {
   it("streams_tokens_into_one_assistant_message", async () => {
@@ -40,7 +63,7 @@ describe("ChatPanel", () => {
     expect(await screen.findByText(/Bring a light jacket for the evenings\.$/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("log")).toHaveAttribute("aria-busy", "false"));
     expect(screen.getAllByText(/^Good question\./)).toHaveLength(1);
-    expect(mockDb.messages.at(-1)).toMatchObject({ role: "assistant", intent: "travel_advice" });
+    expect(mockDb.messages.at(-1)).toMatchObject({ role: "assistant", intent: "advice", metadata: null });
   });
 
   it("message_over_4000_chars_cannot_be_sent", async () => {
@@ -142,7 +165,7 @@ describe("ChatPanel", () => {
     expect(screen.getByText(/I filled in this form from our chat/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create plan" })).toBeInTheDocument();
     expect(screen.queryByText(/"destination"/)).not.toBeInTheDocument();
-    expect(mockDb.messages.at(-1)).toMatchObject({ role: "assistant", intent: "trip_form" });
+    expect(mockDb.messages.at(-1)).toMatchObject({ role: "assistant", intent: "create_trip", metadata: { status: "open" } });
   });
 
   it("form_in_chat_has_no_get_ideas_button", async () => {
@@ -157,7 +180,7 @@ describe("ChatPanel", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await screen.findByText("Trip form canceled")).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Destination" })).not.toBeInTheDocument();
-    expect(mockDb.messages.at(-1)?.intent).toBe("canceled_trip");
+    expect(mockDb.messages.at(-1)?.metadata).toMatchObject({ status: "canceled" });
 
     unmount();
     renderApp(`/chat/${SEED_CONVERSATION_ID}`);
@@ -171,7 +194,7 @@ describe("ChatPanel", () => {
   });
 
   it("canceled_form_without_destination_shows_new_trip_title", async () => {
-    addMessage("canceled_trip", JSON.stringify({ travelers: 1 }));
+    addMessage("create_trip", { status: "canceled", draft: { travelers: 1 }, trip_id: null });
     renderApp(`/chat/${SEED_CONVERSATION_ID}`);
     const card = (await screen.findByText("Trip form canceled")).closest("section");
     expect(within(card as HTMLElement).getByRole("heading", { name: "New trip" })).toBeInTheDocument();
@@ -185,8 +208,7 @@ describe("ChatPanel", () => {
     expect(await screen.findByRole("heading", { name: "Making your plan" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Destination" })).not.toBeInTheDocument();
     const created = mockDb.trips.at(-1);
-    expect(mockDb.messages.at(-1)).toMatchObject({ intent: "created_trip" });
-    expect(JSON.parse(mockDb.messages.at(-1)?.content ?? "{}")).toMatchObject({ trip_id: created?.id });
+    expect(mockDb.messages.at(-1)).toMatchObject({ intent: "create_trip", metadata: { status: "created", trip_id: created?.id } });
 
     // Jump the mock clock past the job, then reload the trip instead of waiting for the poll
     mockDb.now = () => new Date(Date.now() + 60_000);
@@ -202,7 +224,7 @@ describe("ChatPanel", () => {
   });
 
   it("created_form_for_deleted_trip_says_deleted", async () => {
-    addMessage("created_trip", JSON.stringify({ trip_id: DOMESTIC_TRIP_ID }));
+    addMessage("create_trip", { status: "created", draft: {}, trip_id: DOMESTIC_TRIP_ID });
     mockDb.trips = mockDb.trips.filter((trip) => trip.id !== DOMESTIC_TRIP_ID);
     renderApp(`/chat/${SEED_CONVERSATION_ID}`);
     expect(await screen.findByText("This trip was deleted")).toBeInTheDocument();
@@ -220,7 +242,7 @@ describe("ChatPanel", () => {
     expect(link).toHaveAttribute("href", "https://www.booking.com/hotel/vn/mercure-hai-phong.html");
     expect(link).toHaveAttribute("target", "_blank");
     expect(screen.getByRole("region", { name: "Hotels from booking sites" })).toBeInTheDocument();
-    expect(mockDb.messages.at(-1)).toMatchObject({ intent: "hotel_options" });
+    expect(mockDb.messages.at(-1)).toMatchObject({ intent: "booking_search", metadata: { kind: "hotel", status: "results" } });
 
     unmount();
     renderApp(`/chat/${SEED_CONVERSATION_ID}`);
@@ -236,11 +258,155 @@ describe("ChatPanel", () => {
     expect(card.getByText("No price shown")).toBeInTheDocument();
   });
 
-  it("broken_form_content_shows_error_line_and_keeps_thread", async () => {
-    addMessage("trip_form", "not json");
-    addMessage("canceled_trip", "[1]");
+  it("old_hotel_message_from_the_migration_shows_the_slider", async () => {
+    addMessage("booking_search", { kind: "hotel", status: "results", query: "", dates: null, cards: HOTEL_CARDS }, "Prices change.");
+    renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    expect(await screen.findByRole("heading", { name: "Mercure Hai Phong" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Hotels from booking sites" })).toBeInTheDocument();
+  });
+
+  it("broken_form_metadata_shows_error_line_and_keeps_thread", async () => {
+    addMessage("create_trip", null);
+    addMessage("create_trip", { status: "canceled", draft: [1], trip_id: null });
     renderApp(`/chat/${SEED_CONVERSATION_ID}`);
     expect(await screen.findAllByText("This trip form could not be shown.")).toHaveLength(2);
     expect(screen.getByText(/three places that fit a cool/)).toBeInTheDocument();
+  });
+  it("questionnaire_shows_the_first_missing_step_and_saves_a_choice", async () => {
+    const { user } = renderApp("/chat");
+    const card = within(await openQuestionnaire(user));
+    expect(card.getByText("Question 1 of 6")).toBeInTheDocument();
+    await user.click(card.getByRole("checkbox", { name: "Food" }));
+    await user.click(card.getByRole("button", { name: "Next" }));
+    expect(await card.findByRole("heading", { name: "How many people are going?" })).toBeInTheDocument();
+    await user.click(card.getByRole("button", { name: "2 people" }));
+    expect(await card.findByRole("heading", { name: "About how much per person?" })).toBeInTheDocument();
+    expect(savedCard()?.metadata).toMatchObject({ status: "open", step: 2, choices: { "1": ["food"], "2": "2" } });
+  });
+
+  it("questionnaire_back_shows_the_previous_answer_selected", async () => {
+    const { user } = renderApp("/chat");
+    const card = within(await openQuestionnaire(user));
+    await user.click(card.getByRole("button", { name: "Skip this question" }));
+    await user.click(await card.findByRole("button", { name: "3-4 people" }));
+    await card.findByRole("heading", { name: "About how much per person?" });
+    await user.click(card.getByRole("button", { name: "Back" }));
+    expect(card.getByRole("button", { name: "3-4 people" })).toHaveAttribute("aria-pressed", "true");
+    expect(card.getByRole("button", { name: "2 people" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("questionnaire_suggest_now_sends_the_card_id_and_shows_destination_cards", async () => {
+    const { user } = renderApp("/chat");
+    const card = within(await openQuestionnaire(user));
+    const watch = watchChatBodies();
+    const cardId = savedCard()?.id;
+    await user.click(card.getByRole("button", { name: "Suggest now" }));
+    expect(await screen.findAllByRole("button", { name: "Plan this trip" })).toHaveLength(3);
+    expect(watch.bodies.at(-1)).toMatchObject({ discover_message_id: cardId, content: "Suggest destinations for me" });
+    expect(mockDb.messages.find((m) => m.id === cardId)?.metadata).toMatchObject({ status: "done" });
+    watch.stop();
+  });
+
+  it("done_questionnaire_after_reload_shows_the_chosen_labels", async () => {
+    addMessage("discover", {
+      kind: "questionnaire",
+      status: "done",
+      step: 3,
+      answers: { travelers: 4, budget_amount: "3000000" },
+      choices: { "2": "3_4", "3": "saver" },
+    });
+    renderApp(`/chat/${SEED_CONVERSATION_ID}`, { lang: "vi" });
+    const card = within(await screen.findByRole("region", { name: "Vài câu hỏi về chuyến đi" }));
+    expect(card.getByText("Tiết kiệm")).toBeInTheDocument();
+    expect(card.getByText("3-4 người")).toBeInTheDocument();
+    expect(card.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("migrated_ask_message_shows_only_its_text", async () => {
+    addMessage("discover", { kind: "questionnaire", status: "done", step: 0, answers: {}, choices: {} }, "Which month suits you?");
+    renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    expect(await screen.findByText("Which month suits you?")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "A few questions about your trip" })).not.toBeInTheDocument();
+  });
+
+  it("answer_on_a_questionnaire_closed_in_another_tab_says_so_and_shows_it_closed", async () => {
+    const { user } = renderApp("/chat");
+    const card = within(await openQuestionnaire(user));
+    const saved = savedCard();
+    if (saved?.metadata && "kind" in saved.metadata && saved.metadata.kind === "questionnaire") {
+      saved.metadata = { ...saved.metadata, status: "done", choices: { "1": ["food"] } };
+    }
+    await user.click(card.getByRole("checkbox", { name: "Food" }));
+    await user.click(card.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("Your answers")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Suggest now" })).not.toBeInTheDocument();
+  });
+
+  it("dates_sent_on_a_card_closed_in_another_tab_say_so_and_show_it_closed", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.type(composer(), "How much is a hotel in Hai Phong?{Enter}");
+    await screen.findByText("Which dates do you want to stay?");
+    const card = mockDb.messages.at(-1);
+    if (card?.metadata && "kind" in card.metadata && card.metadata.kind === "hotel") card.metadata = { ...card.metadata, status: "done" };
+    const checkIn = addDays(todayInVietnam(), 10);
+    await user.type(screen.getByLabelText("Check-in"), checkIn);
+    await user.type(screen.getByLabelText("Check-out"), addDays(checkIn, 2));
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("This was already used in another tab. The chat now shows the latest state.");
+    expect(await screen.findByText("Dates sent")).toBeInTheDocument();
+  });
+
+  it("hotel_question_without_dates_shows_date_inputs_then_hotel_cards", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.type(composer(), "How much is a hotel in Hai Phong?{Enter}");
+    expect(await screen.findByText("Which dates do you want to stay?")).toBeInTheDocument();
+    const checkIn = addDays(todayInVietnam(), 10);
+    await user.type(screen.getByLabelText("Check-in"), checkIn);
+    await user.type(screen.getByLabelText("Check-out"), addDays(checkIn, 2));
+    const watch = watchChatBodies();
+    const cardId = mockDb.messages.at(-1)?.id;
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByRole("region", { name: "Hotels from booking sites" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Mercure Hai Phong" })).toBeInTheDocument();
+    expect(watch.bodies.at(-1)).toMatchObject({
+      booking_message_id: cardId,
+      dates: { check_in: checkIn, check_out: addDays(checkIn, 2) },
+    });
+    expect(await screen.findByText("Dates sent")).toBeInTheDocument();
+    watch.stop();
+  });
+
+  it("booking_dates_with_check_out_before_check_in_shows_an_error_and_sends_nothing", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.type(composer(), "khách sạn ở Hải Phòng{Enter}");
+    await screen.findByText("Bạn định nhận phòng và trả phòng ngày nào?");
+    const checkIn = addDays(todayInVietnam(), 10);
+    await user.type(screen.getByLabelText("Check-in"), checkIn);
+    await user.type(screen.getByLabelText("Check-out"), addDays(checkIn, -1));
+    const watch = watchChatBodies();
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Check-out must be after check-in.");
+    expect(watch.bodies).toHaveLength(0);
+    expect(mockDb.messages.at(-1)?.metadata).toMatchObject({ status: "need_dates" });
+    watch.stop();
+  });
+
+  it("flight_cards_show_route_carrier_price_and_source_link", async () => {
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    await screen.findByText(/three places that fit a cool/);
+    await user.type(composer(), "Flight tickets from Hanoi to Da Nang{Enter}");
+    const slider = within(await screen.findByRole("region", { name: "Tickets from travel sites" }));
+    const flight = within(slider.getByRole("heading", { name: "Vietnam Airlines" }).closest("article") as HTMLElement);
+    expect(flight.getByText("Hà Nội - Đà Nẵng")).toBeInTheDocument();
+    expect(flight.getByText(/1,290,000/)).toBeInTheDocument();
+    expect(flight.getByText("Estimate")).toBeInTheDocument();
+    expect(flight.getByRole("link", { name: "View on traveloka.com" })).toHaveAttribute("href", "https://www.traveloka.com/vi-vn/flight/han-dad");
+    const train = within(slider.getByRole("heading", { name: "Vietnam Railways" }).closest("article") as HTMLElement);
+    expect(train.getByText("No price shown")).toBeInTheDocument();
+    expect(mockDb.messages.at(-1)).toMatchObject({ intent: "booking_search", metadata: { kind: "flight", status: "results" } });
   });
 });

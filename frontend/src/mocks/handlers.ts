@@ -4,18 +4,21 @@ import {
   type ChatEvent,
   type Conversation,
   type CreateTripBody,
+  type FlightDates,
+  type HotelDates,
   type Message,
   type RequestDraft,
   TRAVEL_STYLES,
   type Trip,
   type TripCreated,
+  type TripFormMeta,
   type TripSummary,
   type User,
 } from "../api/api.types.ts";
 import { apiUrl } from "../api/client.ts";
 import { addDays, todayInVietnam, tripDays } from "../format/dates.ts";
 import { COUNTRY_CURRENCY } from "../format/money.ts";
-import { scriptReply } from "./chatScript.ts";
+import { type ScriptFollowUp, scriptReply } from "./chatScript.ts";
 import { PLACES } from "./fixtures.ts";
 import { type MockMessage, type MockTrip, mockDb, REPLAN_HEAD_START_MS } from "./mockDb.ts";
 
@@ -122,14 +125,34 @@ export const handlers = [
     return ok(conversation);
   }),
 
-  // PATCH /conversations/:conversationId/messages/:messageId - Cancel an open trip form
+  // PATCH /conversations/:conversationId/messages/:messageId - Cancel an open trip form, or answer a questionnaire step
   http.patch(apiUrl("/conversations/:conversationId/messages/:messageId"), async ({ params, request }) => {
     const message = mockDb.messages.find((m) => m.id === params.messageId && m.conversation_id === params.conversationId);
     if (!message) return notFound();
-    const body = (await request.json()) as { intent?: unknown };
-    if (body.intent !== "canceled_trip") return fail(422, "invalid_request", "intent must be canceled_trip");
-    if (message.intent !== "trip_form") return fail(409, "conflict", "This form was already used");
-    message.intent = "canceled_trip";
+    const body = (await request.json()) as { status?: unknown; step?: unknown; choice?: unknown; answers?: unknown };
+    if (typeof body.step === "number") {
+      if (!Number.isInteger(body.step) || body.step < 1 || body.step > 6) return fail(422, "invalid_request", "step must be 1 to 6");
+      const card = message.metadata;
+      if (!card || !("kind" in card) || card.kind !== "questionnaire" || card.status !== "open") {
+        return fail(409, "conflict", "This questionnaire is closed");
+      }
+      // The mock keeps typed values only; the server also turns button ids into draft values
+      const typed = (body.answers ?? {}) as RequestDraft;
+      const conversation = mockDb.conversations.find((c) => c.id === message.conversation_id);
+      if (conversation) conversation.request_draft = { ...conversation.request_draft, ...typed };
+      message.metadata = {
+        ...card,
+        step: Math.max(card.step, body.step),
+        answers: { ...card.answers, ...typed },
+        choices: { ...card.choices, [String(body.step)]: (body.choice ?? null) as string | string[] | null },
+      };
+      const { conversation_id: _c, ...saved } = message;
+      return ok(saved);
+    }
+    if (body.status !== "canceled") return fail(422, "invalid_request", "Unknown body");
+    const form = openForm(message);
+    if (!form) return fail(409, "conflict", "This form was already used");
+    message.metadata = { ...form, status: "canceled" };
     const { conversation_id: _c, ...saved } = message;
     return ok(saved);
   }),
@@ -150,6 +173,10 @@ export const handlers = [
       content?: string;
       trip_id?: string | null;
       plan_revision?: number | null;
+      discover_message_id?: string;
+      booking_message_id?: string;
+      dates?: Partial<HotelDates & FlightDates>;
+      origin?: string;
     };
     if (!body.conversation_id) return fail(422, "invalid_request", "conversation_id is required");
     const conversation = mockDb.conversations.find((c) => c.id === body.conversation_id);
@@ -169,6 +196,10 @@ export const handlers = [
     const blocked = quotaBlocked();
     if (blocked) return blocked;
 
+    // A message from a card must name an open card of this conversation and, for a search, good dates
+    const followUp = checkFollowUp(conversation, body);
+    if (followUp instanceof HttpResponse) return followUp;
+
     // Save the user message; the first one names the conversation
     const iso = mockDb.now().toISOString();
     mockDb.messages.push(row(conversation.id, "user", content, null, null, iso));
@@ -176,20 +207,21 @@ export const handlers = [
     conversation.updated_at = iso;
 
     // Apply the reply's trip change before streaming, like the backend does
-    const reply = scriptReply({ content, trip, conversation });
+    const reply = scriptReply({ content, trip, conversation, followUp });
     if (trip && reply.updatedTrip) {
       Object.assign(trip, reply.updatedTrip);
       if (reply.updatedTrip.status === "researching") mockDb.startJob(trip, REPLAN_HEAD_START_MS);
     }
-    if (reply.intent === "suggest") conversation.request_draft = discoveryDraft(conversation.request_draft);
+    if (reply.intent === "discover") conversation.request_draft = discoveryDraft(conversation.request_draft);
 
-    // A trip form is saved before its event is sent, like the backend does
-    const form = reply.events.find((e): e is Extract<ChatEvent, { type: "trip_form" }> => e.type === "trip_form");
-    if (form) {
-      conversation.request_draft = form.data.draft;
+    // A card with an id is saved with its text before its event is sent, like the backend does
+    const card = reply.events.find((e): e is Extract<ChatEvent, { type: "metadata" }> => e.type === "metadata");
+    if (card?.data.message_id) {
+      if ("draft" in card.data.metadata) conversation.request_draft = card.data.metadata.draft;
+      const text = reply.events.map((e) => (e.type === "token" ? e.data.text : "")).join("").trim();
       mockDb.messages.push({
-        ...row(conversation.id, "assistant", JSON.stringify(form.data.draft), "trip_form", null, iso),
-        id: form.data.message_id,
+        ...row(conversation.id, "assistant", text, reply.intent, card.data.metadata, iso),
+        id: card.data.message_id,
       });
     }
 
@@ -218,7 +250,7 @@ export const handlers = [
     const form = messageId ? mockDb.messages.find((m) => m.id === messageId) : undefined;
     const owner = form ? mockDb.conversations.find((c) => c.id === form.conversation_id) : undefined;
     if (messageId && (!form || owner?.user_id !== body.user_id)) return notFound();
-    if (form && form.intent !== "trip_form") return fail(409, "conflict", "This form was already used");
+    if (form && !openForm(form)) return fail(409, "conflict", "This form was already used");
 
     const iso = mockDb.now().toISOString();
     const country = body.destination.country_code;
@@ -252,8 +284,7 @@ export const handlers = [
     mockDb.startJob(trip);
     if (form && owner) {
       const { user_id: _u, ...request } = body;
-      form.intent = "created_trip";
-      form.content = JSON.stringify({ ...request, trip_id: trip.id });
+      form.metadata = { status: "created", draft: request, trip_id: trip.id };
       owner.request_draft = null;
     }
     return ok({ id: trip.id, status: trip.status } satisfies TripCreated, 202);
@@ -391,29 +422,82 @@ function row(
   role: Message["role"],
   content: string,
   intent: Message["intent"],
-  suggestions: Message["suggestions"],
+  metadata: Message["metadata"],
   createdAt: string,
 ): MockMessage {
-  return { id: crypto.randomUUID(), conversation_id: conversationId, role, content, intent, suggestions, created_at: createdAt };
+  return { id: crypto.randomUUID(), conversation_id: conversationId, role, content, intent, metadata, created_at: createdAt };
 }
 
-// Write the events as SSE frames with a gap between tokens; save the assistant message on done
+// The follow-up a chat body asks for after checking its card and dates (as POST /chat does); an error response when
+// the card is not this conversation's (404), not open (409), or the dates break a rule (422). Closes the card
+function checkFollowUp(
+  conversation: Conversation,
+  body: { discover_message_id?: string; booking_message_id?: string; dates?: Partial<HotelDates & FlightDates>; origin?: string },
+): ScriptFollowUp | ReturnType<typeof fail> | null {
+  const id = body.discover_message_id ?? body.booking_message_id;
+  if (!id) return null;
+  if (body.discover_message_id && body.booking_message_id) return fail(422, "invalid_request", "Send one card id");
+  if (body.booking_message_id && !body.dates) return fail(422, "invalid_request", "dates are required");
+  const card = mockDb.messages.find((m) => m.id === id);
+  if (!card || card.conversation_id !== conversation.id) return notFound();
+  const meta = card.metadata;
+  if (!meta || !("kind" in meta)) return fail(409, "conflict", "This card is closed");
+
+  if (body.discover_message_id) {
+    if (meta.kind !== "questionnaire" || meta.status !== "open") return fail(409, "conflict", "This card is closed");
+    card.metadata = { ...meta, status: "done" };
+    return { kind: "discover" };
+  }
+  if ((meta.kind !== "hotel" && meta.kind !== "flight") || meta.status !== "need_dates") return fail(409, "conflict", "This card is closed");
+  const today = todayInVietnam(mockDb.now());
+  const dates = body.dates ?? {};
+  const start = meta.kind === "hotel" ? dates.check_in : dates.depart;
+  const end = meta.kind === "hotel" ? dates.check_out : dates.return;
+  if (!start || start < today) return fail(422, "invalid_request", "Dates cannot be in the past");
+  if (meta.kind === "hotel" && (!end || end <= start || tripDays(start, end) - 1 > MAX_TRIP_DAYS)) {
+    return fail(422, "invalid_request", "Check-out must be after check-in, at most 30 nights");
+  }
+  if (meta.kind === "flight" && end && end < start) return fail(422, "invalid_request", "The return is before the departure");
+  const draft = conversation.request_draft ?? {};
+  if (meta.kind === "flight" && !body.origin && !draft.origin) return fail(422, "invalid_request", "origin is required");
+  card.metadata = { ...meta, status: "done" };
+  conversation.request_draft = {
+    ...draft,
+    ...(draft.start_date ? {} : { start_date: start, ...(end ? { end_date: end } : {}) }),
+    ...(draft.origin || !body.origin ? {} : { origin: body.origin }),
+  };
+  return meta.kind === "hotel"
+    ? { kind: "hotel", query: meta.query, dates: { check_in: start, check_out: end as string } }
+    : { kind: "flight", query: meta.query, dates: { depart: start, return: end ?? null } };
+}
+
+// The metadata of an open trip form; null for any other message
+function openForm(message: MockMessage): TripFormMeta | null {
+  const meta = message.metadata;
+  return message.intent === "create_trip" && meta !== null && "draft" in meta && meta.status === "open" ? meta : null;
+}
+
+// Write the events as SSE frames with a gap between tokens; save the assistant message on done unless it was saved first
 function sse(conversationId: string, events: ChatEvent[], intent: Message["intent"], signal: AbortSignal) {
   const encoder = new TextEncoder();
   let isCancelled = false;
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       let text = "";
-      let cards: Message["suggestions"] = null;
+      let metadata: Message["metadata"] = null;
+      let isSaved = false;
       for (const event of events) {
         if (event.type === "token") {
           text += event.data.text;
           if (mockDb.tokenGapMs > 0) await new Promise((resolve) => setTimeout(resolve, mockDb.tokenGapMs));
         }
         if (isCancelled || signal.aborted) return;
-        if (event.type === "suggestions" || event.type === "hotels") cards = event.data.cards;
-        if (event.type === "done" && intent !== "trip_form") {
-          mockDb.messages.push(row(conversationId, "assistant", text.trim(), intent, cards, mockDb.now().toISOString()));
+        if (event.type === "metadata") {
+          metadata = event.data.metadata;
+          isSaved = event.data.message_id !== null;
+        }
+        if (event.type === "done" && !isSaved) {
+          mockDb.messages.push(row(conversationId, "assistant", text.trim(), intent, metadata, mockDb.now().toISOString()));
         }
         controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`));
       }

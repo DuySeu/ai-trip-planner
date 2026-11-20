@@ -196,7 +196,7 @@ Payload (`CreateTripBody` = `TripRequest` + `user_id` + `message_id` tùy chọn
 
 Không gửi tiền tệ địa phương; server tự suy ra từ `country_code`.
 
-Khi có `message_id`, trong cùng transaction với trip và job, server kiểm tra tin nhắn thuộc một hội thoại của chính `user_id`, chuyển `intent` của tin nhắn từ `trip_form` sang `created_trip`, ghi `content` thành các giá trị đã gửi kèm `trip_id` (không có `user_id` và `message_id`), và xóa `request_draft` của hội thoại. `message_id` không được ghi vào request của trip. Nếu tin nhắn không còn là `trip_form` (ví dụ hai tab cùng bấm tạo) thì trả 409 và không tạo trip hay job nào.
+Khi có `message_id`, trong cùng transaction với trip và job, server kiểm tra tin nhắn là form tạo trip (`intent = create_trip`) thuộc một hội thoại của chính `user_id`, đặt `metadata` của tin nhắn thành `{"status": "created", "draft": <các giá trị đã gửi, không có user_id và message_id>, "trip_id": "uuid"}`, và xóa `request_draft` của hội thoại. `message_id` không được ghi vào request của trip. Nếu form không còn `open` (ví dụ hai tab cùng bấm tạo) hoặc tin nhắn không phải form thì trả 409 và không tạo trip hay job nào.
 
 Output 202, `data` là `TripCreated`:
 
@@ -351,7 +351,7 @@ Output 200, `data` là `ConversationOut` thêm `messages`:
       "role": "user",
       "content": "Đi đâu cuối năm cho mát?",
       "intent": null,
-      "suggestions": null,
+      "metadata": null,
       "created_at": "2026-11-19T03:05:00Z"
     }
   ]
@@ -359,9 +359,23 @@ Output 200, `data` là `ConversationOut` thêm `messages`:
 ```
 
 - `role`: `user` hoặc `assistant`.
-- `intent`: loại câu trả lời của assistant, một trong `plan_answer`, `plan_editor`, `trip_research`, `travel_advice`, `clarification`, `ask`, `suggest`, `answer`, `trip_form`, `created_trip`, `canceled_trip`, `hotel_options`; có thể `null`.
-- `suggestions`: mảng thẻ gợi ý điểm đến khi `intent = suggest`, mảng thẻ khách sạn khi `intent = hotel_options` (có thể `null` khi không tìm được khách sạn nào), còn lại `null`.
-- `trip_form`, `created_trip`, `canceled_trip`: ba trạng thái của một form tạo trip trong chat. `content` là chuỗi JSON các trường của `RequestDraft` (thêm `trip_id` khi `created_trip`), không phải văn bản. Tin nhắn chỉ đi từ `trip_form` sang một trong hai trạng thái kia, qua `POST /trips` với `message_id` hoặc `PATCH` bên dưới.
+- `intent`: luồng đã trả lời, một trong `advice`, `discover`, `booking_search`, `create_trip`, `edit_plan`; `null` cho tin nhắn của khách.
+- `metadata`: phần có cấu trúc của câu trả lời, theo `intent`:
+
+| `intent` | `metadata` |
+|---|---|
+| `advice` | `null`; `{"clarify": true}` khi assistant hỏi lại vì chưa rõ câu hỏi; `{"searched": true}` khi câu trả lời dựa trên tìm web |
+| `edit_plan` | `null` |
+| `discover`, thẻ hỏi nhu cầu | `{"kind": "questionnaire", "status": "open" \| "done", "step": 0-6, "answers": {...}, "choices": {...}}`; `content` là `""` |
+| `discover`, gợi ý | `{"kind": "suggestions", "cards": [...]}`, thẻ là `SuggestionCard` (`src/domain/discovery.py:60`) |
+| `booking_search`, chờ ngày | `{"kind": "hotel" \| "flight", "status": "need_dates" \| "done", "query": "..."}`; `content` là câu hỏi ngày |
+| `booking_search`, kết quả | `{"kind": "hotel" \| "flight", "status": "results", "query": "...", "dates": {...}, "cards": [...]}`; `cards` có thể rỗng |
+| `create_trip` | `{"status": "open" \| "created" \| "canceled", "draft": {...}, "trip_id": "uuid" \| null}`; `content` là `""` |
+
+- Thẻ hỏi nhu cầu: `step` là bước xa nhất khách đã trả lời (0 khi chưa trả lời bước nào), `answers` là các trường `RequestDraft` đã biết, `choices` ghi id nút khách bấm theo số bước (`null` khi khách nhập tay hoặc bỏ qua). Tin nhắn `ask` cũ (trước migration 0004) có `status = done`, `answers` rỗng và `content` là câu hỏi dạng text.
+- `dates` của kết quả: `{"check_in", "check_out"}` cho khách sạn, `{"depart", "return"}` cho vé (`return` có thể `null`); `null` ở tin nhắn khách sạn cũ trước migration 0004.
+- Thẻ khách sạn (`HotelCard`, `src/domain/hotels.py:25`): `name`, `area`, `stars` (1-5 hoặc `null`), `price_per_night` (số hoặc `null`), `price_currency`, `highlights`, `source_id`, `url`. Thẻ vé (`FlightCard`, `src/domain/flights.py:26`): `carrier`, `mode` (`flight`, `train`, `bus`, `car`, `motorbike`, `boat`), `route`, `duration_text`, `price_from` (số hoặc `null`), `price_currency`, `highlights`, `source_id`, `url`. `url` do server gắn từ nguồn; tối đa 6 thẻ, thẻ có giá đứng trước.
+- Form tạo trip chỉ đi từ `open` sang `created` (qua `POST /trips` với `message_id`) hoặc `canceled` (qua `PATCH` bên dưới).
 
 Lỗi: 404 khi không có hội thoại.
 
@@ -383,19 +397,31 @@ Lỗi: 404 khi không có hội thoại; 422 khi title rỗng hoặc quá dài.
 
 ### PATCH /conversations/{conversation_id}/messages/{message_id}
 
-Hủy một form tạo trip: chuyển `intent` của tin nhắn từ `trip_form` sang `canceled_trip`, giữ nguyên `content`. Code: `src/api/routes/chat.py:126`.
+Hủy một form tạo trip, hoặc trả lời một bước của thẻ hỏi nhu cầu. Không gọi AI. Code: `src/api/routes/chat.py:130`.
 
-Payload:
+Payload hủy form (`metadata.status` từ `open` sang `canceled`, giữ nguyên `draft`):
 
 ```json
-{ "intent": "canceled_trip" }
+{ "status": "canceled" }
 ```
 
-- `intent`: bắt buộc, chỉ nhận `canceled_trip`.
+Payload trả lời thẻ hỏi nhu cầu đang `open`:
+
+```json
+{ "step": 3, "choice": "saver", "answers": {} }
+```
+
+| Field | Bắt buộc | Ràng buộc |
+|---|---|---|
+| `step` | có | 1 đến 6: `styles`, `travelers`, `budget`, `origin`, `when`, `length` |
+| `choice` | không | Id nút của bước (`OPTIONS`, `src/domain/questionnaire.py:56`); bước 1 là mảng id. `null` khi khách nhập tay hoặc bỏ qua |
+| `answers` | không | Giá trị khách nhập khi `choice` là `null`, chỉ các trường của bước đó: `travel_styles`, `travelers`, `budget_amount`, `origin`, `start_date` (không ở quá khứ), `length_days`. Bước 6 nhận thêm `notes` cạnh một nút |
+
+Server đổi nút sang giá trị (`answer_for`, `src/domain/questionnaire.py:69`), gộp vào `metadata.answers` và `request_draft` của hội thoại, ghi `choices[step]`, và đặt `step` bằng giá trị lớn hơn giữa bước cũ và bước vừa trả lời. `choice` và `answers` cùng rỗng là bỏ qua bước.
 
 Output 200: `data` là `MessageOut` (xem `GET /conversations/{conversation_id}`).
 
-Lỗi: 404 khi không có tin nhắn hoặc tin nhắn không thuộc hội thoại trong URL; 409 `conflict` khi tin nhắn không còn là `trip_form` (đã tạo trip hoặc đã hủy); 422 khi `intent` khác `canceled_trip`. Route không kiểm tra user, giống các route hội thoại khác.
+Lỗi: 404 khi không có tin nhắn hoặc tin nhắn không thuộc hội thoại trong URL; 409 `conflict` khi form không còn `open`, thẻ đã `done`, hoặc body không hợp với loại tin nhắn (hủy một thẻ hỏi, trả lời một form); 422 khi body không khớp dạng nào, `step` ngoài 1-6, id nút lạ hoặc giá trị nhập sai. Route không kiểm tra user, giống các route hội thoại khác.
 
 ### DELETE /conversations/{conversation_id}
 
@@ -409,7 +435,9 @@ Xóa hội thoại và toàn bộ tin nhắn. Code: `src/api/routes/chat.py:141`
 
 ### POST /chat
 
-Gửi một tin nhắn vào hội thoại và nhận câu trả lời dạng server-sent events. Nếu có `trip_id`, câu hỏi gắn với trip đang mở và assistant có thể sửa plan của trip đó. Tin nhắn đầu tiên đặt làm tiêu đề hội thoại nếu hội thoại chưa có (80 ký tự đầu). Code: `src/api/routes/chat.py:151`.
+Gửi một tin nhắn vào hội thoại và nhận câu trả lời dạng server-sent events. Nếu có `trip_id`, câu hỏi gắn với trip đang mở và assistant có thể sửa plan của trip đó. Tin nhắn đầu tiên đặt làm tiêu đề hội thoại nếu hội thoại chưa có (80 ký tự đầu). Code: `src/api/routes/chat.py:170`.
+
+Thường thì router chọn luồng trả lời. Khi có `discover_message_id` hoặc `booking_message_id`, server bỏ qua router và chạy luồng của thẻ đó: gợi ý điểm đến từ draft hiện có, hoặc tìm khách sạn/vé với ngày khách chọn. Thẻ được đặt `status = done` trước khi trả lời.
 
 Payload:
 
@@ -428,8 +456,16 @@ Payload:
 | `content` | có | 1 đến 4000 ký tự |
 | `trip_id` | không | Trip đang mở trên màn hình |
 | `plan_revision` | không | `plan_revision` client đang thấy; nếu khác giá trị hiện tại thì trả về 409 |
+| `discover_message_id` | không | Id của thẻ hỏi nhu cầu đang `open` trong hội thoại này; không gửi cùng `booking_message_id` |
+| `booking_message_id` | không | Id của thẻ chờ ngày (`need_dates`) trong hội thoại này; cần `dates` |
+| `dates` | khi có `booking_message_id` | Khách sạn: `check_in`, `check_out` (không ở quá khứ, trả phòng sau nhận phòng, tối đa 30 đêm). Vé: `depart` (không ở quá khứ), `return` tùy chọn (không trước `depart`) |
+| `origin` | không | Nơi xuất phát cho thẻ vé; bắt buộc khi trip đang mở và draft đều không có |
 
-Lỗi trả về trước khi stream bắt đầu (dạng envelope JSON): 404 khi không có hội thoại hoặc trip; 409 `conflict` khi `plan_revision` đã cũ hoặc trip chưa có plan; 422 khi `content` rỗng hoặc quá dài; 429 `rate_limited` khi vượt giới hạn chat theo IP hoặc theo user; 429 `quota_exhausted` khi hết quota OpenRouter.
+Ngày và nơi xuất phát được ghi vào `request_draft` khi draft chưa có.
+
+Thẻ được đặt `done` trước khi lưu tin nhắn của người dùng và trước khi stream bắt đầu, nên lần bấm thứ hai (cùng tab hay tab khác) nhận 409 và không lưu gì. Nếu stream lỗi hoặc bị đóng trước token đầu tiên, thẻ được mở lại (`open` hoặc `need_dates`) để bấm lần nữa.
+
+Lỗi trả về trước khi stream bắt đầu (dạng envelope JSON): 404 khi không có hội thoại, trip, hoặc thẻ không thuộc hội thoại; 409 `conflict` khi `plan_revision` đã cũ, trip chưa có plan, hoặc thẻ đã `done`; 422 khi `content` rỗng hoặc quá dài, gửi cả hai id, `booking_message_id` thiếu `dates`, hoặc ngày sai luật; 429 `rate_limited` khi vượt giới hạn chat theo IP hoặc theo user; 429 `quota_exhausted` khi hết quota OpenRouter.
 
 Output 200: `Content-Type: text/event-stream`. Mỗi event có dạng:
 
@@ -443,9 +479,7 @@ data: <json>
 |---|---|---|
 | `token` | `{ "text": "..." }` | Một đoạn câu trả lời (mỗi từ một event), nối lại theo thứ tự |
 | `plan` | `{ "plan_revision": 2 }` | Plan của trip đã được ghi đè; client tải lại `GET /trips/{trip_id}` |
-| `suggestions` | `{ "cards": [...] }` | Thẻ gợi ý điểm đến (`SuggestionCard`, `src/domain/discovery.py:60`): `name`, `country_code`, `why`, `length_days`, `est_cost_per_person_vnd`, `best_months`, `highlights`, `source_ids` |
-| `hotels` | `{ "cards": [...] }` | Thẻ khách sạn cho câu hỏi về giá hoặc lựa chọn khách sạn, sau các `token` (`HotelCard`, `src/domain/hotels.py`): `name`, `area`, `stars` (1-5 hoặc `null`), `price_per_night` (số hoặc `null`), `price_currency`, `highlights`, `source_id`, `url` (trang nguồn, do server gắn). Tối đa 6 thẻ, thẻ có giá đứng trước; không có event này khi không còn thẻ nào |
-| `trip_form` | `{ "message_id": "uuid", "draft": {...} }` | Chat nhận ra ý định tạo trip mới và đã lưu một tin nhắn `intent = trip_form`; `draft` là các trường `RequestDraft` điền sẵn từ cuộc trò chuyện (`destination` có tọa độ do server tìm). Không có `token` đi kèm |
+| `metadata` | `{ "message_id": "uuid" \| null, "metadata": {...} }` | Phần có cấu trúc của câu trả lời, đúng object sẽ lưu vào `messages.metadata` (bảng ở `GET /conversations/{conversation_id}`), gửi một lần sau các `token`. `message_id` có giá trị khi tin nhắn đã được lưu trước event (thẻ hỏi nhu cầu, thẻ chờ ngày, form tạo trip), `null` khi tin nhắn được lưu lúc stream kết thúc (gợi ý, kết quả tìm). Thẻ hỏi nhu cầu và form tạo trip không có `token` đi kèm |
 | `error` | `{ "code": "...", "message": "..." }` | Câu trả lời dừng vì lỗi; `code` là `quota_exhausted` (kèm `blocked_until`), `conflict`, `not_found`, `invalid_output` hoặc `llm_unavailable` |
 | `done` | `{}` | Kết thúc câu trả lời |
 

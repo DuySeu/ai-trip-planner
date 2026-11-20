@@ -1,17 +1,17 @@
 """A visitor who wants to plan a trip now gets a form prefilled from the chat.
 
 One LLM call reads the chat; code finds the destination's coordinates. The form is one assistant
-message (intent ``trip_form``) whose content is the draft as JSON; no text is streamed."""
+message (intent ``create_trip``) with empty content whose metadata holds the draft; no text is
+streamed."""
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from agents.create_trip_agent import CreateTripAgent, drop_past_dates
-from chat.events import ChatEvent
+from chat.events import ChatEvent, metadata_event
 from chat.handlers import HISTORY_MESSAGES, VIETNAMESE_LETTER, conversation_text
 from core.exceptions import InvalidLLMOutput, LLMUnavailable, ResearchFailed
 from db.repositories import conversations, messages
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Save a trip form message and the draft it shows, then emit one trip_form event.
+# Save a trip form message and the draft it shows, then emit one metadata event.
 # Running out of AI quota ends the turn with an error; any other model failure still gives a form.
 def run_create_trip_turn(turn: ChatTurn, deps: ChatDeps) -> Iterator[ChatEvent]:
     call_ctx = CallContext(
@@ -73,14 +73,11 @@ def run_create_trip_turn(turn: ChatTurn, deps: ChatDeps) -> Iterator[ChatEvent]:
     if destination is not None:
         draft["destination"] = destination.model_dump(mode="json")
 
+    metadata = {"status": "open", "draft": draft, "trip_id": None}
     with deps.pool.connection() as conn:
         conversations.save_draft(conn, turn.conversation_id, draft)
         form = messages.add_message(
-            conn,
-            turn.conversation_id,
-            "assistant",
-            json.dumps(draft, ensure_ascii=False),
-            "trip_form",
+            conn, turn.conversation_id, "assistant", "", "create_trip", metadata
         )
     logger.info(
         "trip form %s: model named %r, place found %s, fields %s",
@@ -89,4 +86,4 @@ def run_create_trip_turn(turn: ChatTurn, deps: ChatDeps) -> Iterator[ChatEvent]:
         f"{destination.name} ({destination.country_code})" if destination else "none",
         ", ".join(sorted(draft)) or "none",
     )
-    yield ChatEvent("trip_form", {"message_id": str(form.id), "draft": draft})
+    yield metadata_event(form.id, metadata)

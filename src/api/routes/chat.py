@@ -12,7 +12,8 @@ from fastapi.responses import StreamingResponse
 from api.deps import Conn, Deps, limit_chat, require_quota
 from api.envelope import ApiResponse, PageMeta
 from api.schemas.chat import (
-    CloseTripFormBody,
+    AnswerQuestionBody,
+    CancelFormBody,
     ConversationDetail,
     ConversationOut,
     CreateConversationBody,
@@ -22,10 +23,12 @@ from api.schemas.chat import (
     conversation_out,
     message_out,
 )
-from chat.chat_service import ChatDeps, ChatTurn, prepare_message, stream_reply
+from chat.chat_service import ChatDeps, ChatTurn, FollowUp, prepare_message, stream_reply
 from chat.events import to_sse
+from chat.questionnaire_service import answer_questionnaire
 from core.exceptions import Conflict, LimitExceeded, NotFound
 from db.repositories import conversations, messages, users
+from domain.trip_request import today_in_vietnam
 from research.cache import DbCache
 from research.places import search_places
 
@@ -122,15 +125,31 @@ def rename_conversation(
     return ApiResponse(success=True, data=conversation_out(row))
 
 
-# PATCH /conversations/{conversation_id}/messages/{message_id} - Cancel an open trip form
+# PATCH /conversations/{conversation_id}/messages/{message_id} - Cancel an open trip form, or
+# answer one step of an open questionnaire card
 @router.patch("/conversations/{conversation_id}/messages/{message_id}")
-def close_trip_form(
-    conversation_id: UUID, message_id: UUID, body: CloseTripFormBody, conn: Conn
+def update_message(
+    conversation_id: UUID,
+    message_id: UUID,
+    body: CancelFormBody | AnswerQuestionBody,
+    conn: Conn,
+    deps: Deps,
 ) -> ApiResponse[MessageOut]:
+    if isinstance(body, AnswerQuestionBody):
+        today = today_in_vietnam(deps.now())
+        saved = answer_questionnaire(
+            conn, conversation_id, message_id, body.step, body.choice, body.answers, today
+        )
+        conn.commit()
+        return ApiResponse(success=True, data=message_out(saved))
+
     form = messages.get_message(conn, message_id)
     if form.conversation_id != conversation_id:
         raise NotFound(f"message {message_id}")
-    closed = messages.close_trip_form(conn, message_id, body.intent, None)
+    if form.intent != "create_trip":
+        raise Conflict(f"message {message_id} is not a trip form")
+    canceled = {**(form.metadata or {}), "status": "canceled"}
+    closed = messages.update_open_metadata(conn, message_id, {"status": "open"}, canceled)
     if closed is None:
         raise Conflict("This form was already used")
     conn.commit()
@@ -156,6 +175,11 @@ def send_message(body: SendMessageBody, deps: Deps, chat_deps: ChatDepsDep) -> S
         if messages.count_user_messages_today(conn, owner) >= deps.settings.user_chat_per_day:
             raise LimitExceeded("Daily message limit reached for this name, try again tomorrow")
         require_quota("chat")(deps, conn)
+        follow_up = None
+        if body.discover_message_id is not None:
+            follow_up = FollowUp(body.discover_message_id, "discover")
+        elif body.booking_message_id is not None:
+            follow_up = FollowUp(body.booking_message_id, "booking", body.dates, body.origin)
         turn = prepare_message(
             conn,
             conversation_id,
@@ -163,6 +187,8 @@ def send_message(body: SendMessageBody, deps: Deps, chat_deps: ChatDepsDep) -> S
             body.trip_id,
             body.plan_revision,
             deps.settings.retention_days,
+            follow_up,
+            today_in_vietnam(deps.now()),
         )
         conversations.set_title_if_missing(conn, conversation_id, body.content[:MAX_TITLE_CHARS])
     return StreamingResponse(

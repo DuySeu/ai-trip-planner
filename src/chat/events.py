@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+from uuid import UUID
 
 from core.exceptions import (
     Conflict,
@@ -17,7 +18,7 @@ from core.exceptions import (
     QuotaExhausted,
 )
 
-EventType = Literal["token", "plan", "suggestions", "hotels", "trip_form", "error", "done"]
+EventType = Literal["token", "plan", "metadata", "error", "done"]
 WORD_END = re.compile(r"(?<= )")
 # Errors a reply can end with; each becomes an error event instead of a broken stream
 REPLY_ERRORS = (
@@ -45,6 +46,16 @@ def to_sse(event: ChatEvent) -> str:
 # An error event with the code the frontend switches on
 def error_event(code: str, message: str, **extra: Any) -> ChatEvent:
     return ChatEvent("error", {"code": code, "message": message, **extra})
+
+
+# The structured part of a reply (cards, a form, a card's state); message_id is set when the
+# message was saved before the event, null when it is saved after the stream
+def metadata_event(message_id: UUID | None, metadata: Mapping[str, Any]) -> ChatEvent:
+    data = {
+        "message_id": None if message_id is None else str(message_id),
+        "metadata": dict(metadata),
+    }
+    return ChatEvent("metadata", data)
 
 
 # The text as token events, one per word, so the frontend can show it as it arrives

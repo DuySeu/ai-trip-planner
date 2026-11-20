@@ -21,9 +21,10 @@ describe("ChatPage", () => {
     expect(screen.getAllByText("Where should 4 friends go in December?", { selector: "li" })).toHaveLength(1);
   });
 
-  it("discovery_reply_shows_three_suggestion_cards", async () => {
+  it("discovery_suggest_now_on_the_questionnaire_shows_three_suggestion_cards", async () => {
     const { user } = renderApp("/chat");
     await user.type(composer(), "Give me ideas for December{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Suggest now" }));
     expect(await screen.findAllByRole("button", { name: "Plan this trip" })).toHaveLength(3);
     expect(screen.getByRole("heading", { name: "Chiang Mai" })).toBeInTheDocument();
     expect(screen.getAllByText("Estimate").length).toBeGreaterThanOrEqual(3);

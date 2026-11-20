@@ -96,7 +96,7 @@ def conversation(db_conn):
     return create_conversation(db_conn, claim_user(db_conn, "Duy").id, None)
 
 
-def test_create_trip_turn_saves_form_message_and_emits_trip_form_event(
+def test_create_trip_turn_saves_form_metadata_and_emits_metadata_event(
     db_pool, db_conn, conversation
 ):
     rig = Rig(db_pool, [EXTRACT])
@@ -107,11 +107,12 @@ def test_create_trip_turn_saves_form_message_and_emits_trip_form_event(
         "origin": "Hà Nội",
         "length_days": 3,
     }
-    assert [e.type for e in events] == ["trip_form", "done"]
-    assert events[0].data["draft"] == expected
+    assert [e.type for e in events] == ["metadata", "done"]
+    form = {"status": "open", "draft": expected, "trip_id": None}
+    assert events[0].data["metadata"] == form
     last = recent_messages(db_conn, conversation.id, 2)[-1]
-    assert (last.role, last.intent) == ("assistant", "trip_form")
-    assert json.loads(last.content) == expected
+    assert (last.role, last.intent, last.content) == ("assistant", "create_trip", "")
+    assert last.metadata == form
     assert events[0].data["message_id"] == str(last.id)
     assert get_conversation(db_conn, conversation.id).request_draft == expected
     assert len(rig.provider.calls) == 2
@@ -120,23 +121,23 @@ def test_create_trip_turn_saves_form_message_and_emits_trip_form_event(
 def test_unknown_destination_leaves_destination_out(db_pool, db_conn, conversation):
     rig = Rig(db_pool, [EXTRACT], found=[])
     events = rig.say(conversation.id, "plan a trip")
-    assert events[0].type == "trip_form"
-    assert events[0].data["draft"] == {"origin": "Hà Nội", "length_days": 3}
+    assert events[0].type == "metadata"
+    assert events[0].data["metadata"]["draft"] == {"origin": "Hà Nội", "length_days": 3}
 
 
 def test_geocoder_failure_leaves_destination_out(db_pool, db_conn, conversation):
     rig = Rig(db_pool, [EXTRACT], found=ResearchFailed("geocoder down"))
     events = rig.say(conversation.id, "plan a trip")
-    assert events[0].type == "trip_form"
-    assert "destination" not in events[0].data["draft"]
+    assert events[0].type == "metadata"
+    assert "destination" not in events[0].data["metadata"]["draft"]
 
 
 def test_invalid_model_output_still_gives_form_from_old_draft(db_pool, db_conn, conversation):
     save_draft(db_conn, conversation.id, {"travelers": 4})
     rig = Rig(db_pool, ["not json", "still not json"])
     events = rig.say(conversation.id, "plan a trip")
-    assert [e.type for e in events] == ["trip_form", "done"]
-    assert events[0].data["draft"] == {"travelers": 4}
+    assert [e.type for e in events] == ["metadata", "done"]
+    assert events[0].data["metadata"]["draft"] == {"travelers": 4}
     assert rig.places_calls == []
 
 
@@ -164,4 +165,4 @@ def test_past_dates_from_the_model_are_not_kept(db_pool, db_conn, conversation):
     answer = json.dumps({"start_date": "2026-11-01", "end_date": "2026-11-03", "length_days": 3})
     rig = Rig(db_pool, [answer])
     events = rig.say(conversation.id, "plan a 3 day trip")
-    assert events[0].data["draft"] == {"length_days": 3}
+    assert events[0].data["metadata"]["draft"] == {"length_days": 3}

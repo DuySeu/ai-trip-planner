@@ -6,12 +6,13 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 from db.repositories.conversations import ConversationRow
 from db.repositories.messages import MessageRow
+from domain.booking import BookingDates
 from domain.discovery import RequestDraft, merge_draft
-from domain.trip_request import clean_text
+from domain.trip_request import PlaceText, clean_text
 
 MAX_MESSAGE_CHARS = 4000
 MAX_TITLE_CHARS = 80
@@ -49,17 +50,40 @@ class RenameBody(BaseModel):
     title: TitleText
 
 
-# Body of PATCH /conversations/{id}/messages/{id}: the only change allowed is canceling a trip form
-class CloseTripFormBody(BaseModel):
-    intent: Literal["canceled_trip"]
+# Body of PATCH /conversations/{id}/messages/{id} that cancels an open trip form
+class CancelFormBody(BaseModel):
+    status: Literal["canceled"]
 
 
-# Body of POST /chat: the conversation, the text, and the trip open on screen, if any
+# Body of PATCH /conversations/{id}/messages/{id} that answers one step of an open questionnaire:
+# a button id in choice, or typed values in answers with choice null; both empty skips the step
+class AnswerQuestionBody(BaseModel):
+    step: int = Field(ge=1, le=6)
+    choice: str | list[str] | None = None
+    answers: dict[str, Any] = {}
+
+
+# Body of POST /chat: the conversation, the text, and the trip open on screen, if any. A card's id
+# skips the router: discover_message_id asks for suggestions, booking_message_id searches with the
+# dates (and origin) chosen on the card
 class SendMessageBody(BaseModel):
     conversation_id: UUID
     content: MessageText
     trip_id: UUID | None = None
     plan_revision: int | None = None
+    discover_message_id: UUID | None = None
+    booking_message_id: UUID | None = None
+    dates: BookingDates | None = None
+    origin: PlaceText | None = None
+
+    # One card at a time, and a booking card needs its dates
+    @model_validator(mode="after")
+    def _one_follow_up(self) -> SendMessageBody:
+        if self.discover_message_id is not None and self.booking_message_id is not None:
+            raise ValueError("send discover_message_id or booking_message_id, not both")
+        if self.booking_message_id is not None and self.dates is None:
+            raise ValueError("booking_message_id needs dates")
+        return self
 
 
 # One message of a conversation
@@ -68,7 +92,7 @@ class MessageOut(BaseModel):
     role: str
     content: str
     intent: str | None
-    suggestions: list[Any] | None
+    metadata: dict[str, Any] | None
     created_at: datetime
 
 
@@ -106,6 +130,6 @@ def message_out(row: MessageRow) -> MessageOut:
         role=row.role,
         content=row.content,
         intent=row.intent,
-        suggestions=row.suggestions,
+        metadata=row.metadata,
         created_at=row.created_at,
     )

@@ -1,5 +1,6 @@
 import type {
   Category,
+  FlightCard,
   HotelCard,
   ItemStatus,
   Place,
@@ -55,6 +56,31 @@ export const HOTEL_CARDS: HotelCard[] = [
     highlights: ["Rooftop bar"],
     source_id: 102,
     url: "https://www.agoda.com/the-light-hotel/hotel/haiphong-vn.html",
+  },
+];
+
+export const FLIGHT_CARDS: FlightCard[] = [
+  {
+    carrier: "Vietnam Airlines",
+    mode: "flight",
+    route: "Hà Nội - Đà Nẵng",
+    duration_text: "1h 20m",
+    price_from: 1290000,
+    price_currency: "VND",
+    highlights: ["Daily flights"],
+    source_id: 201,
+    url: "https://www.traveloka.com/vi-vn/flight/han-dad",
+  },
+  {
+    carrier: "Vietnam Railways",
+    mode: "train",
+    route: "Hà Nội - Đà Nẵng",
+    duration_text: "",
+    price_from: null,
+    price_currency: "VND",
+    highlights: [],
+    source_id: 202,
+    url: "https://dsvn.vn/",
   },
 ];
 
