@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
 import psycopg
 import pytest
-from dotenv import load_dotenv
 from psycopg import sql
 from psycopg_pool import ConnectionPool
 
+from core.config import config
 from core.settings import DbSettings, load_db_settings
 from db.pool import open_pool
 from scripts.migrate import apply_migrations
@@ -27,8 +26,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 # Tests run in "<DB_NAME>_test" on the same server, never in DB_NAME itself
 @pytest.fixture(scope="session")
 def migrated_db() -> Iterator[str]:
-    load_dotenv()
-    db: DbSettings = load_db_settings(os.environ)
+    db: DbSettings = load_db_settings(config.ENV)
     test_name = f"{db.name}_test"
 
     # Create the test database on first use

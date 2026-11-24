@@ -38,12 +38,14 @@ class LLMProvider(ABC):
         self.model_id = model_id
         self.inference_config = inference_config
 
+    # response_format asks for JSON output: {"type": "json_object"} or {"type": "json_schema", ...}
     @abstractmethod
     def invoke(
         self,
         messages: list[dict[str, Any]],
         system_prompt: str,
         tools: list[dict] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any] | LLMResponse:
         pass
 

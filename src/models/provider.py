@@ -58,18 +58,23 @@ class OpenAIProvider(LLMProvider):
         messages: list[dict[str, Any]],
         system_prompt: str,
         tools: list[dict] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
         kwargs = {}
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
+        json_options: dict[str, Any] = (
+            {"response_format": response_format} if response_format else {}
+        )
 
         response = self.client.chat.completions.create(
             model=self.model_id,
             messages=full_messages,
             **self._get_openai_config(),
             **kwargs,
+            **json_options,
         )
 
         message = response.choices[0].message
@@ -178,12 +183,23 @@ class OpenRouterProvider(LLMProvider):
         messages: list[dict[str, Any]],
         system_prompt: str,
         tools: list[dict] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
         kwargs = {}
         if tools:
             kwargs["tools"] = self._convert_tools(tools)
+        # With response_format: route only to endpoints that support it (a model with none answers
+        # 404, so the router tries the next one), and let OpenRouter repair malformed JSON
+        # https://openrouter.ai/docs/features/structured-outputs
+        json_options: dict[str, Any] = {}
+        if response_format:
+            json_options = {
+                "response_format": response_format,
+                "provider": {"require_parameters": True},
+                "plugins": [{"id": "response-healing"}],
+            }
 
         response = self.client.chat.send(
             model=self.model_id,
@@ -191,6 +207,7 @@ class OpenRouterProvider(LLMProvider):
             stream=False,
             **self._get_openai_config(),
             **kwargs,
+            **json_options,
         )
 
         message = response.choices[0].message
@@ -321,7 +338,10 @@ class BedrockProvider(LLMProvider):
         messages: list[dict[str, Any]],
         system_prompt: str,
         tools: list[dict] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
+        if response_format:
+            raise ValueError("BedrockProvider does not support response_format")
         payload = self._prepare_payload(messages, system_prompt, tools)
         response = self.client.invoke_model(**payload)
         response_body = json.loads(response.get("body").read())

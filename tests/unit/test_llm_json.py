@@ -122,3 +122,35 @@ def test_budget_exceeded_is_not_swallowed_and_repair_counts_as_a_call():
     with pytest.raises(LLMBudgetExceeded):
         run(make_router(provider), ctx=CallContext(budget=CallBudget(limit=1)))
     assert len(provider.calls) == 1
+
+
+class Item(BaseModel):
+    id: str = ""
+    name: str
+
+
+class Reply(BaseModel):
+    items: list[Item]
+
+
+def test_call_json_asks_for_the_prompt_schema_without_fields_set_by_code():
+    provider = FakeProvider(['{"items": [{"name": "x"}]}'])
+    call_json(
+        make_router(provider), "generate", "sys", MESSAGES, Reply, None, CTX, {"Item": {"id"}}
+    )
+    response_format = provider.formats[0]
+    assert response_format is not None
+    assert response_format["type"] == "json_schema"
+    assert (response_format["json_schema"]["name"], response_format["json_schema"]["strict"]) == (
+        "Reply",
+        False,
+    )
+    item = response_format["json_schema"]["schema"]["$defs"]["Item"]
+    assert item["properties"] == {"name": {"type": "string"}}
+
+
+def test_repair_call_keeps_the_same_response_format():
+    provider = FakeProvider(['{"a": "x"}', '{"a": 2}'])
+    run(make_router(provider))
+    assert provider.formats[0] == provider.formats[1]
+    assert provider.formats[0] is not None

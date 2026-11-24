@@ -18,8 +18,8 @@ from types import FrameType
 
 import httpx
 import psycopg
-from dotenv import load_dotenv
 
+from core.config import config
 from core.exceptions import NotFound
 from core.logger import setup_logging
 from core.settings import load_settings
@@ -102,8 +102,7 @@ def run_worker(
 
 # Build the real services from the environment and run until SIGTERM
 def main() -> None:
-    load_dotenv()
-    settings = load_settings(os.environ)
+    settings = load_settings(config.ENV)
     setup_logging()
 
     now: Callable[[], datetime] = functools.partial(datetime.now, UTC)

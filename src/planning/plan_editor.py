@@ -121,5 +121,12 @@ def propose_edit(
         return check_plan(result.plan, request, frozenset()).errors
 
     return call_json(
-        router, "edit", system, [{"role": "user", "content": content}], PlanEdit, check, ctx
+        router,
+        "edit",
+        system,
+        [{"role": "user", "content": content}],
+        PlanEdit,
+        check,
+        ctx,
+        HIDDEN_FIELDS,
     )

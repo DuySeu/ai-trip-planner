@@ -364,7 +364,7 @@ Output 200, `data` là `ConversationOut` thêm `messages`:
 
 | `intent` | `metadata` |
 |---|---|
-| `advice` | `null`; `{"clarify": true}` khi assistant hỏi lại vì chưa rõ câu hỏi; `{"searched": true}` khi câu trả lời dựa trên tìm web |
+| `advice` | `null`; `{"clarify": true}` khi assistant hỏi lại vì chưa rõ câu hỏi; `{"searched": true}` khi câu trả lời dựa trên tìm web; `{"blocked": true, "guard": "travel_only" \| "denylist", "category": "off_topic" \| "prompt_injection" \| "harmful" \| "denylist" \| null}` khi guardrail chặn tin nhắn (câu trả lời cố định, không qua router) |
 | `edit_plan` | `null` |
 | `discover`, thẻ hỏi nhu cầu | `{"kind": "questionnaire", "status": "open" \| "done", "step": 0-6, "answers": {...}, "choices": {...}}`; `content` là `""` |
 | `discover`, gợi ý | `{"kind": "suggestions", "cards": [...]}`, thẻ là `SuggestionCard` (`src/domain/discovery.py:60`) |

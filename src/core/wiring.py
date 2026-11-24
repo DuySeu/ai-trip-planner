@@ -36,6 +36,7 @@ def build_router(
         "answer": settings.chat_models,
         "discover": settings.chat_models,
         "suggest": settings.chat_models,
+        "guard": settings.classifier_models,
     }
     return ModelRouter(
         provider_for=provider_for,

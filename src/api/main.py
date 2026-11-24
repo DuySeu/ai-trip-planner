@@ -10,7 +10,6 @@ Then open http://127.0.0.1:8000/docs for the interactive API.
 from __future__ import annotations
 
 import functools
-import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -23,6 +22,7 @@ from api.deps import AppDeps, build_limiters, limit_api
 from api.errors import register_error_handlers
 from api.middleware import REQUEST_ID_HEADER, BodyLimitMiddleware, RequestIdMiddleware
 from api.routes import chat, exports, health, places, stats, trips, users
+from core.config import config
 from core.logger import setup_logging
 from core.settings import Settings, load_settings
 from core.wiring import build_router
@@ -99,6 +99,6 @@ def create_app(settings: Settings, deps: AppDeps | None = None) -> FastAPI:
 
 # Factory for uvicorn: settings from the environment, colored text logs on
 def app_factory() -> FastAPI:
-    settings = load_settings(os.environ)
+    settings = load_settings(config.ENV)
     setup_logging()
     return create_app(settings)

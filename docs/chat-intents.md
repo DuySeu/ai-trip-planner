@@ -18,6 +18,7 @@ Mỗi tin nhắn của người dùng được router (`OrchestratorAgent`) đ�
 
 | Khi nào | Chạy gì |
 |---|---|
+| Tin nhắn gõ tay bị guardrail chặn (`GUARDRAIL_CONFIG` trong `src/chat/guard_turn.py`, prompt và denylist ở `src/guardrail/prompt/*.txt`: `denylist`, rồi `travel_only` chấm `off_topic`, `prompt_injection`, `harmful` từ 0.7) | Trả câu cố định `OFF_TOPIC` (`src/chat/guard_turn.py`), lưu `advice` với `{"blocked": true, "guard": ..., "category": ...}`. Guard chạy trước router (`src/chat/chat_service.py`, `_dispatch`); guard lỗi thì tin nhắn đi tiếp. Bấm thẻ không qua guard |
 | `POST /chat` có `discover_message_id` | Đóng thẻ hỏi nhu cầu, gợi ý điểm đến từ draft hiện có. Lưu `discover` với `{"kind": "suggestions"}` |
 | `POST /chat` có `booking_message_id` và `dates` | Đóng thẻ chờ ngày, tìm khách sạn hoặc vé với ngày đã chọn. Lưu `booking_search` với `status = results` |
 | `PATCH /conversations/{id}/messages/{message_id}` trả lời một bước | Ghi câu trả lời vào thẻ và draft, không gọi AI |

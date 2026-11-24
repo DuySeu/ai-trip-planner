@@ -57,6 +57,7 @@ class DiscoverSuggestAgent:
             SuggestionsReply,
             check,
             ctx,
+            HIDDEN_FIELDS,
         ).value
         cards = usable_cards(reply.cards, known_source_ids)[:MAX_CARDS]
         return reply.model_copy(update={"cards": cards})

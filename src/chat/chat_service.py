@@ -17,6 +17,7 @@ from chat.booking_turn import run_booking_follow_up, run_booking_turn
 from chat.create_trip_turn import run_create_trip_turn
 from chat.discovery_turn import run_discover_turn, run_suggest_turn
 from chat.events import REPLY_ERRORS, ChatEvent, event_for_error, token_events
+from chat.guard_turn import OFF_TOPIC, check_message
 from chat.handlers import (
     ChatContext,
     answer_about_plan,
@@ -24,6 +25,7 @@ from chat.handlers import (
     edit_plan,
     give_travel_advice,
     load_context,
+    localized,
 )
 from chat.history import message_for_model
 from core.exceptions import Conflict, InvalidInput, NotFound, PlanConflict
@@ -32,6 +34,7 @@ from db.repositories import conversations, messages, trips
 from db.repositories.messages import MessageRow
 from domain.booking import BookingDates, BookingKind, dates_errors
 from domain.trip_request import Language, today_in_vietnam
+from guardrail import Action
 from models.model_router import CallContext, ModelRouter, RouterProvider
 from orchestration.routing_schema import AgentSpec, RoutingDecision
 from research.places import Place
@@ -110,6 +113,8 @@ class ChatDeps:
     settings: Settings
     now: Callable[[], datetime]
     places: Callable[[str, Language], list[Place]]
+    # The guardrail config a typed message is checked against before the router; None skips it
+    guardrail_config: Mapping[str, Any] | None = None
 
 
 # A message that answers a card instead of going through the router: suggest from a questionnaire
@@ -248,6 +253,21 @@ def _dispatch(turn: ChatTurn, deps: ChatDeps, reply: _Reply) -> Iterator[ChatEve
             follow = run_booking_follow_up(data, turn, deps, call_ctx)
         yield from _reopen_on_failure(follow, turn.follow_up, deps)
         return
+
+    # A typed message that is not about travel (or is harmful or an injection) gets a fixed reply
+    if deps.guardrail_config is not None:
+        verdict = check_message(
+            deps.guardrail_config, deps.router, call_ctx, turn.message.content, data.history
+        )
+        if verdict.action is Action.BLOCK:
+            # The pipeline stops at the first block, so the last result is the blocking guard's
+            category = verdict.results[-1].category
+            logger.info("chat flow: blocked by guard %s (%s)", verdict.blocked_by, category)
+            reply.intent = "advice"
+            reply.metadata = {"blocked": True, "guard": verdict.blocked_by, "category": category}
+            yield from token_events(localized(turn.message.content, OFF_TOPIC))
+            return
+
     decision = _classify(data, turn, deps, call_ctx)
 
     if decision.status == "needs_clarification":

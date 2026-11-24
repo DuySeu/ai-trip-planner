@@ -4,6 +4,7 @@ import json
 import logging
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -21,6 +22,7 @@ from models.model_router import (
     RouterProvider,
     classify_error,
 )
+from models.provider import OpenRouterProvider
 from tests.fakes import FakeProvider, FakeSink
 
 PATTERN = "free-models-per-day"
@@ -36,6 +38,15 @@ def rate_limit(message: str = "Rate limit exceeded") -> errors.TooManyRequestsRe
     response = httpx.Response(429, text=body, headers={"content-type": "application/json"})
     data = errors.TooManyRequestsResponseErrorData.model_validate_json(body)
     return errors.TooManyRequestsResponseError(data, response, body)
+
+
+# The SDK's 404 when no endpoint of the model supports the request's parameters
+def no_endpoints() -> errors.NotFoundResponseError:
+    message = "No endpoints found that can handle the requested parameters."
+    body = json.dumps({"error": {"code": 404, "message": message}})
+    response = httpx.Response(404, text=body, headers={"content-type": "application/json"})
+    data = errors.NotFoundResponseErrorData.model_validate_json(body)
+    return errors.NotFoundResponseError(data, response, body)
 
 
 # The SDK's generic error for a status without a specific class
@@ -260,3 +271,48 @@ def test_router_provider_streams_text_deltas():
     router, _ = make_router({MODEL_A: FakeProvider(["streamed text"])})
     adapter = RouterProvider(router, "generate", CallContext())
     assert "".join(c.delta or "" for c in adapter.invoke_stream(MESSAGES, "sys")) == "streamed text"
+
+
+def test_model_without_json_support_falls_back_to_next_model():
+    providers = {MODEL_A: FakeProvider([no_endpoints()]), MODEL_B: FakeProvider(['{"a": 1}'])}
+    router, sink = make_router(providers)
+    json_object = {"type": "json_object"}
+    response = router.invoke("generate", MESSAGES, "sys", CallContext(), json_object)
+    assert response.answer == '{"a": 1}'
+    assert providers[MODEL_B].formats == [json_object]
+    assert [(r.model_id, r.outcome) for r in sink.logs] == [
+        (MODEL_A, "provider_error"),
+        (MODEL_B, "ok"),
+    ]
+
+
+# Records the keyword arguments of chat.send and answers with a fixed message
+class RecordingChat:
+    def __init__(self) -> None:
+        self.kwargs: dict[str, Any] = {}
+
+    def send(self, **kwargs: Any) -> Any:
+        self.kwargs = kwargs
+        message = SimpleNamespace(content="{}", tool_calls=None)
+        usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+
+
+def openrouter_with(chat: RecordingChat) -> OpenRouterProvider:
+    provider = OpenRouterProvider(MODEL_A, {})
+    provider.client = SimpleNamespace(chat=chat)  # type: ignore[assignment]
+    return provider
+
+
+def test_openrouter_json_request_requires_support_and_heals_the_reply():
+    chat = RecordingChat()
+    openrouter_with(chat).invoke(MESSAGES, "sys", response_format={"type": "json_object"})
+    assert chat.kwargs["response_format"] == {"type": "json_object"}
+    assert chat.kwargs["provider"] == {"require_parameters": True}
+    assert chat.kwargs["plugins"] == [{"id": "response-healing"}]
+
+
+def test_openrouter_text_request_sends_no_json_options():
+    chat = RecordingChat()
+    openrouter_with(chat).invoke(MESSAGES, "sys")
+    assert not {"response_format", "provider", "plugins"} & chat.kwargs.keys()

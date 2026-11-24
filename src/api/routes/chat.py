@@ -25,6 +25,7 @@ from api.schemas.chat import (
 )
 from chat.chat_service import ChatDeps, ChatTurn, FollowUp, prepare_message, stream_reply
 from chat.events import to_sse
+from chat.guard_turn import GUARDRAIL_CONFIG
 from chat.questionnaire_service import answer_questionnaire
 from core.exceptions import Conflict, LimitExceeded, NotFound
 from db.repositories import conversations, messages, users
@@ -52,6 +53,7 @@ def get_chat_deps(deps: Deps) -> ChatDeps:
         deps.settings,
         deps.now,
         lambda q, language: search_places(deps.http, cache, q, language),
+        GUARDRAIL_CONFIG,
     )
 
 

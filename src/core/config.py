@@ -1,4 +1,5 @@
 import os
+from collections.abc import Mapping
 
 from dotenv import load_dotenv
 
@@ -14,6 +15,9 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or ""
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY") or ""
+    # The whole environment with .env loaded, read live: for the typed loaders in core.settings
+    # and for values read at call time (LOG_LEVEL, NO_COLOR)
+    ENV: Mapping[str, str] = os.environ
 
 
 config = Config()

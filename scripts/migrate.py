@@ -1,17 +1,16 @@
 """Apply sql/migrations/*.sql in order, each once, recording them in schema_migrations.
 
-Run from the repo root: PYTHONPATH=src uv run python scripts/migrate.py (reads DB_* from the environment or .env).
+Run from the repo root: PYTHONPATH=src uv run python scripts/migrate.py (reads DB_* through core.config: the environment or .env).
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 import psycopg
-from dotenv import load_dotenv
 
+from core.config import config
 from core.settings import load_db_settings
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "sql" / "migrations"
@@ -46,8 +45,7 @@ def apply_migrations(conn: psycopg.Connection, migrations_dir: Path) -> list[str
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    load_dotenv()
-    db = load_db_settings(os.environ)
+    db = load_db_settings(config.ENV)
     with psycopg.connect(db.conninfo(), autocommit=True) as connection:
         versions = apply_migrations(connection, MIGRATIONS_DIR)
     logger.info("%d migration(s) applied", len(versions))

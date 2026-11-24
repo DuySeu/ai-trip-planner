@@ -24,6 +24,8 @@ from contextvars import ContextVar
 from types import MappingProxyType
 from typing import Any
 
+from core.config import config
+
 LOG_FORMAT = "%(asctime)s | %(relpath)s | %(levelname)s | %(message)s"
 DATE_FORMAT = "%H:%M:%S"
 
@@ -80,7 +82,7 @@ class ColorFormatter(logging.Formatter):
 # Send every record to stderr through one ColorFormatter handler; level from LOG_LEVEL (default
 # INFO, unknown names fall back to INFO). Safe to call again: it replaces its own handler only.
 def setup_logging(fmt: str = LOG_FORMAT, datefmt: str = DATE_FORMAT) -> None:
-    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    level_name = config.ENV.get("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
     root = logging.getLogger()
@@ -88,7 +90,7 @@ def setup_logging(fmt: str = LOG_FORMAT, datefmt: str = DATE_FORMAT) -> None:
         root.removeHandler(old)
 
     handler = logging.StreamHandler()
-    use_color = handler.stream.isatty() and os.environ.get("NO_COLOR") is None
+    use_color = handler.stream.isatty() and config.ENV.get("NO_COLOR") is None
     handler.setFormatter(ColorFormatter(fmt, datefmt, use_color=use_color, root=os.getcwd()))
     root.addHandler(handler)
     root.setLevel(level)

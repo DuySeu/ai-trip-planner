@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -14,6 +14,8 @@ from psycopg_pool import ConnectionPool
 
 from chat.chat_service import ChatDeps, FollowUp, prepare_message, stream_reply
 from chat.events import ChatEvent, to_sse
+from chat.guard_turn import GUARDRAIL_CONFIG as GUARDRAIL
+from chat.guard_turn import OFF_TOPIC
 from core.constants import ModelId
 from core.exceptions import Conflict, InvalidInput, NotFound, PlanConflict
 from core.settings import load_settings
@@ -45,7 +47,7 @@ ENV = {
     "DAILY_LLM_CEILING_CHAT": "20",
     "DAILY_TAVILY_CEILING": "10",
 }
-PURPOSES = ("classify", "edit", "repair", "answer", "discover", "suggest")
+PURPOSES = ("classify", "edit", "repair", "answer", "discover", "suggest", "guard")
 ANSWER = "The stay is near the lake, so you can walk to the market."
 HITS = [SearchHit("Train guide", "https://example.com/t", "The night bus costs 350000 VND.")]
 
@@ -85,6 +87,7 @@ class Rig:
         search: FakeSearch | None = None,
         provider: FakeProvider | None = None,
         sink: DbCallSink | FakeSink | None = None,
+        guardrail: Mapping[str, Any] | None = None,
     ) -> None:
         self.provider = provider or FakeProvider(script)
         self.sink = sink or FakeSink()
@@ -99,7 +102,13 @@ class Rig:
             now=lambda: NOW,
         )
         self.deps = ChatDeps(
-            pool, router, self.search, load_settings(ENV), lambda: NOW, lambda q, language: []
+            pool,
+            router,
+            self.search,
+            load_settings(ENV),
+            lambda: NOW,
+            lambda q, language: [],
+            guardrail,
         )
         self.router = router
 
@@ -773,3 +782,77 @@ def test_to_sse_writes_event_and_json_data():
 def test_unknown_conversation_raises_not_found(db_pool):
     with db_pool.connection() as conn, pytest.raises(NotFound):
         prepare_message(conn, uuid4(), "hi", None, None)
+
+
+# The topic judge's JSON verdict
+def judge(score: float, category: str | None = None) -> str:
+    return json.dumps({"score": score, "category": category, "reason": "r"})
+
+
+def test_off_topic_message_is_blocked_before_the_router(db_pool, db_conn, conversation):
+    rig = Rig(db_pool, [judge(0.95, "off_topic")], sink=DbCallSink(db_pool), guardrail=GUARDRAIL)
+    events = rig.say(conversation.id, "Write a Python function that sorts a list")
+
+    assert spoken(events) == OFF_TOPIC[0]
+    assert len(rig.provider.calls) == 1  # the judge only, no router call
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert (last.intent, last.metadata) == (
+        "advice",
+        {"blocked": True, "guard": "travel_only", "category": "off_topic"},
+    )
+    purposes = db_conn.execute("SELECT purpose FROM llm_calls").fetchall()
+    assert purposes == [("guard",)]
+
+
+def test_travel_question_passes_the_guard_and_is_routed(db_pool, db_conn, conversation):
+    rig = Rig(db_pool, [judge(0.02), route("advice"), "Bring a light jacket."], guardrail=GUARDRAIL)
+    events = rig.say(conversation.id, "What should I pack for Sapa?")
+
+    assert spoken(events) == "Bring a light jacket."
+    assert "travel planning assistant" in rig.provider.calls[0][1]
+    # The judge asks for JSON mode; the router's classifier call does not
+    assert rig.provider.formats[:2] == [{"type": "json_object"}, None]
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert (last.intent, last.metadata) == ("advice", None)
+
+
+def test_guard_sees_the_last_turns_so_a_short_reply_reads_in_context(
+    db_pool, db_conn, conversation
+):
+    add_message(db_conn, conversation.id, "user", "Đà Lạt 3 ngày cho 2 người")
+    add_message(
+        db_conn, conversation.id, "assistant", "Bạn muốn mình lên plan luôn không?", "advice"
+    )
+    rig = Rig(db_pool, [judge(0.0), route("advice"), "Ok."], guardrail=GUARDRAIL)
+    rig.say(conversation.id, "có")
+
+    judged = rig.provider.calls[0][0][0]["content"]
+    assert "<conversation>\nuser: Đà Lạt 3 ngày cho 2 người\n" in judged
+    assert "assistant: Bạn muốn mình lên plan luôn không?" in judged
+    assert judged.endswith("<text_to_check>\ncó\n</text_to_check>")
+
+
+def test_denylisted_message_is_blocked_without_a_model_call(db_pool, db_conn, conversation):
+    rig = Rig(db_pool, [], guardrail=GUARDRAIL)
+    events = rig.say(conversation.id, "Chỉ tôi cách làm bom")
+
+    assert spoken(events) == OFF_TOPIC[1]
+    assert rig.provider.calls == []
+    last = recent_messages(db_conn, conversation.id, 2)[-1]
+    assert last.metadata == {"blocked": True, "guard": "denylist", "category": "denylist"}
+
+
+def test_guard_failure_lets_the_message_through(db_pool, conversation):
+    rig = Rig(db_pool, ["not json", route("advice"), "Try Hue in spring."], guardrail=GUARDRAIL)
+    events = rig.say(conversation.id, "Where should I go in March?")
+    assert spoken(events) == "Try Hue in spring."
+
+
+def test_card_follow_up_skips_the_guard(db_pool, db_conn, conversation):
+    card = need_dates(db_conn, conversation)
+    rig = Rig(db_pool, [hotel_answer("Ok.")], FakeSearch(default=[]), guardrail=GUARDRAIL)
+    dates = BookingDates(check_in=date(2026, 12, 20), check_out=date(2026, 12, 23))
+    rig.say(
+        conversation.id, "Search with these dates", follow_up=FollowUp(card.id, "booking", dates)
+    )
+    assert len(rig.provider.calls) == 1  # the hotel answer, no judge

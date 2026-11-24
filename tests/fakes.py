@@ -18,6 +18,8 @@ class FakeProvider(LLMProvider):
         super().__init__(model_id, {})
         self._script = list(script)
         self.calls: list[tuple[list[dict[str, Any]], str]] = []
+        # The response_format of each invoke call, in order
+        self.formats: list[dict[str, Any] | None] = []
 
     # Record the call and take the next scripted item
     def _next(self, messages: Sequence[Mapping[str, Any]], system_prompt: str) -> str:
@@ -35,7 +37,9 @@ class FakeProvider(LLMProvider):
         messages: Sequence[Mapping[str, Any]],
         system_prompt: str,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
+        self.formats.append(response_format)
         answer = self._next(messages, system_prompt)
         return LLMResponse(answer=answer, input_tokens=10, output_tokens=5)
 

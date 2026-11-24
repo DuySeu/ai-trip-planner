@@ -22,7 +22,9 @@ from core.exceptions import InvalidLLMOutput, LLMBudgetExceeded, LLMUnavailable,
 from db.repositories.llm_calls import LlmCallRecord
 from models.base import LLMProvider, LLMResponse, StreamChunk
 
-Purpose = Literal["generate", "repair", "classify", "edit", "answer", "discover", "suggest"]
+Purpose = Literal[
+    "generate", "repair", "classify", "edit", "answer", "discover", "suggest", "guard"
+]
 Outcome = Literal[
     "ok", "rate_limited", "quota_exhausted", "timeout", "provider_error", "invalid_output"
 ]
@@ -38,6 +40,7 @@ STEPS: Mapping[Purpose, str] = {
     "edit": "turn the request into a plan edit",
     "discover": "read the chat for the trip draft",
     "suggest": "suggest destinations",
+    "guard": "check the chat message is about travel",
     "generate": "write the trip plan",
     "repair": "fix invalid JSON",
 }
@@ -132,12 +135,15 @@ class ModelRouter:
         messages: Sequence[Mapping[str, Any]],
         system_prompt: str,
         ctx: CallContext,
+        response_format: Mapping[str, Any] | None = None,
     ) -> LLMResponse:
         self._begin(ctx)
         started = time.monotonic()
         try:
             response = self._provider_for(model_id).invoke(
-                [dict(m) for m in messages], system_prompt
+                [dict(m) for m in messages],
+                system_prompt,
+                response_format=dict(response_format) if response_format else None,
             )
         except PROVIDER_ERRORS as exc:
             outcome = classify_error(exc, self._daily_cap_pattern)
@@ -162,10 +168,14 @@ class ModelRouter:
         messages: Sequence[Mapping[str, Any]],
         system_prompt: str,
         ctx: CallContext,
+        response_format: Mapping[str, Any] | None = None,
     ) -> tuple[LLMResponse, str]:
         for model_id in self.models_for(purpose):
             try:
-                return self.invoke_model(model_id, purpose, messages, system_prompt, ctx), model_id
+                response = self.invoke_model(
+                    model_id, purpose, messages, system_prompt, ctx, response_format
+                )
+                return response, model_id
             except LLMUnavailable:
                 continue
         raise LLMUnavailable(f"no model answered for purpose {purpose}")
@@ -177,8 +187,9 @@ class ModelRouter:
         messages: Sequence[Mapping[str, Any]],
         system_prompt: str,
         ctx: CallContext,
+        response_format: Mapping[str, Any] | None = None,
     ) -> LLMResponse:
-        return self.invoke_with_model(purpose, messages, system_prompt, ctx)[0]
+        return self.invoke_with_model(purpose, messages, system_prompt, ctx, response_format)[0]
 
     # Stream text; the next model is tried only while no token was sent yet
     def stream(
@@ -292,11 +303,12 @@ class RouterProvider(LLMProvider):
         messages: Sequence[Mapping[str, Any]],
         system_prompt: str,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         if tools:
             raise ValueError("RouterProvider does not support tools")
         response, self.model_id = self._router.invoke_with_model(
-            self._purpose, messages, system_prompt, self._ctx
+            self._purpose, messages, system_prompt, self._ctx, response_format
         )
         return response
 
@@ -353,7 +365,18 @@ def call_json[T: BaseModel](
     schema: type[T],
     check: Callable[[T], list[str]] | None,
     ctx: CallContext,
+    drop: Mapping[str, AbstractSet[str]] | None = None,
 ) -> JsonResult[T]:
+    # The same schema the prompt shows (drop hides fields set by code). Not strict: strict mode
+    # needs every field required with no defaults, which these schemas do not keep
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": schema.__name__,
+            "strict": False,
+            "schema": response_schema(schema, drop or {}),
+        },
+    }
     last_errors: list[str] = []
     for model_id in router.models_for(purpose):
         attempt_purpose: Purpose = purpose
@@ -361,7 +384,7 @@ def call_json[T: BaseModel](
         for _ in range(2):
             try:
                 response = router.invoke_model(
-                    model_id, attempt_purpose, attempt_messages, system_prompt, ctx
+                    model_id, attempt_purpose, attempt_messages, system_prompt, ctx, response_format
                 )
             except LLMUnavailable:
                 break
@@ -416,8 +439,12 @@ def _strip(node: Any, drop: Mapping[str, AbstractSet[str]], owner: str | None = 
     return out
 
 
-# The model's JSON schema as one compact line, without titles, defaults or the dropped fields
+# The model's JSON schema without titles, defaults or the dropped fields
 # drop maps a model class name to the field names to hide, such as {"PlanItem": {"id"}}
+def response_schema(model: type[BaseModel], drop: Mapping[str, AbstractSet[str]]) -> Any:
+    return _strip(model.model_json_schema(), drop, model.__name__)
+
+
+# The same schema as one compact line, for the prompt
 def compact_schema(model: type[BaseModel], drop: Mapping[str, AbstractSet[str]]) -> str:
-    schema = _strip(model.model_json_schema(), drop, model.__name__)
-    return json.dumps(schema, separators=(",", ":"), ensure_ascii=True)
+    return json.dumps(response_schema(model, drop), separators=(",", ":"), ensure_ascii=True)

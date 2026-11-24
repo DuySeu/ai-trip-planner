@@ -186,7 +186,9 @@ def generate_plan(
     def check(draft: DraftPlan) -> list[str]:
         return check_plan(_assemble(draft, request, research), request, known_ids).errors
 
-    result = call_json(router, "generate", system, [first_message], DraftPlan, check, ctx)
+    result = call_json(
+        router, "generate", system, [first_message], DraftPlan, check, ctx, HIDDEN_FIELDS
+    )
     plan = check_plan(_assemble(result.value, request, research), request, known_ids).plan
     model_id = result.model_id
 
@@ -205,7 +207,9 @@ def generate_plan(
             {"role": "user", "content": cut_message},
         ]
         try:
-            cut = call_json(router, "generate", system, messages, DraftPlan, check, ctx)
+            cut = call_json(
+                router, "generate", system, messages, DraftPlan, check, ctx, HIDDEN_FIELDS
+            )
         except (InvalidLLMOutput, LLMUnavailable) as exc:
             logger.warning("budget cut failed, keeping the first plan: %s", exc)
         else:
