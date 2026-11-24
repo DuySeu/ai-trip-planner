@@ -68,7 +68,6 @@ class Settings:
     quota_reset_hour_utc: int = 0
     openrouter_daily_cap_pattern: str = "free-models-per-day"
     tavily_quota_pattern: str = "usage limit"
-    retention_days: int = 30
     user_inactive_days: int = 90
     trust_proxy_headers: bool = False
     cors_origins: tuple[str, ...] = ("http://localhost:5173",)

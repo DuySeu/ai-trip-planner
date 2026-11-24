@@ -42,8 +42,7 @@ def insert_trip(conn: psycopg.Connection, user_id: UUID, **overrides: Any) -> UU
     columns = ", ".join(values)
     placeholders = ", ".join(f"%({key})s" for key in values)
     row = conn.execute(
-        f"INSERT INTO trips ({columns}, expires_at) "
-        f"VALUES ({placeholders}, now() + interval '30 days') RETURNING id",
+        f"INSERT INTO trips ({columns}) VALUES ({placeholders}) RETURNING id",
         values,
     ).fetchone()
     assert row is not None

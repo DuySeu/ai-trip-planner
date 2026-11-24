@@ -138,7 +138,7 @@ def conversation(db_conn, user):
 # A ready Da Lat trip of the user at plan revision 1
 @pytest.fixture
 def ready_trip(db_conn, user) -> TripRow:
-    trip = create_trip(db_conn, user.id, DALAT_FIELDS, None, retention_days=30)
+    trip = create_trip(db_conn, user.id, DALAT_FIELDS, None)
     return save_plan(
         db_conn, trip.id, 0, dalat_plan().model_dump(mode="json"), Decimal("1000000"), False, "m"
     )
@@ -211,7 +211,7 @@ def test_stale_plan_revision_raises_before_streaming(db_pool, db_conn, conversat
 
 
 def test_trip_without_plan_raises_conflict_before_streaming(db_pool, db_conn, user, conversation):
-    queued = create_trip(db_conn, user.id, DALAT_FIELDS, None, retention_days=30)
+    queued = create_trip(db_conn, user.id, DALAT_FIELDS, None)
     with db_pool.connection() as conn, pytest.raises(Conflict):
         prepare_message(conn, conversation.id, "hi", queued.id, None)
 

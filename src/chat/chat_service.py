@@ -149,7 +149,6 @@ def prepare_message(
     content: str,
     trip_id: UUID | None,
     plan_revision: int | None,
-    retention_days: int = 30,
     follow_up: FollowUp | None = None,
     today: date | None = None,
 ) -> ChatTurn:
@@ -174,7 +173,7 @@ def prepare_message(
     message = messages.add_message(conn, conversation_id, "user", content)
     conversations.touch_conversation(conn, conversation_id)
     if trip_id is not None:
-        trips.touch(conn, trip_id, retention_days)
+        trips.touch(conn, trip_id)
     # Commit now: the call log of the stream refers to this message from other connections
     conn.commit()
     return ChatTurn(

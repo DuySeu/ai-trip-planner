@@ -186,7 +186,6 @@ def send_message(body: SendMessageBody, deps: Deps, chat_deps: ChatDepsDep) -> S
             body.content,
             body.trip_id,
             body.plan_revision,
-            deps.settings.retention_days,
             follow_up,
             today_in_vietnam(deps.now()),
         )

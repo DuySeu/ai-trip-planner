@@ -56,7 +56,7 @@ Minimum requirements a component must meet before it ships, written so they carr
 ### Delete
 
 - Delete always goes through a confirm dialog. The dialog names the conversation and says that its messages are deleted and cannot be recovered; the confirm button uses the destructive style.
-- The server answers `DELETE /conversations/{id}` with 204. It deletes the messages and unlinks anything that referenced the conversation (here, trips) without deleting it.
+- The server answers `DELETE /conversations/{id}` with 204. It deletes the conversation with its messages and the research saved for it; trips are not linked to a conversation and stay, and logged AI calls keep their row with the conversation cleared.
 - On success, remove the row from the list cache and drop the detail cache.
 - If the deleted conversation is the one open, navigate to an empty new chat.
 

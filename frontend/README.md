@@ -1,75 +1,35 @@
-# React + TypeScript + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Giao diện web của AI trip planner: React 19, TypeScript, Vite, Tailwind CSS v4, TanStack Query và React Router. Cách chạy cả hệ thống nằm ở `README.md` ở thư mục gốc; quy định giao diện nằm ở `CLAUDE.md` và `ui-component-principles.md` trong thư mục này.
 
-Currently, two official plugins are available:
+## Chạy
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+cp .env.example .env
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+- `VITE_API_BASE_URL`: địa chỉ backend, mặc định `http://localhost:8000`.
+- `VITE_API_MOCK=true`: mọi request được trả lời ngay trong trình duyệt bằng dữ liệu giả (MSW, `src/mocks/`), không cần backend. Đặt `false` để gọi backend thật.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Lệnh
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+| Lệnh | Việc làm |
+|---|---|
+| `npm run dev` | Dev server có hot reload |
+| `npm test` | Vitest, chạy một lần |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | `tsc -b` |
+| `npm run build` | Typecheck rồi build vào `dist/` |
+| `npm run preview` | Xem bản build |
 
-```
+## Thư mục `src/`
+
+- `pages/`: các trang theo route (`NamePage`, `HomePage`, `NewTripPage`, `ChatPage`, `TripPage`).
+- `components/`: các thành phần giao diện, kể cả các thẻ trong chat (form tạo trip, thẻ hỏi nhu cầu, thẻ chọn ngày, slider khách sạn và vé).
+- `api/`: kiểu dữ liệu của API và các hook TanStack Query; `chat/` đọc stream SSE của `POST /chat`.
+- `mocks/`: backend giả cho chế độ mock và cho test.
+- `i18n/`: chuỗi giao diện tiếng Anh và tiếng Việt (`en.json`, `vi.json`).
+- `styles/recipes.ts`: các class dùng chung; token màu nằm ở `index.css`.
+- `format/`, `layout/`, `session/`, `theme/`, `test/`: định dạng tiền và ngày, khung trang, tên người dùng, chế độ sáng tối, tiện ích cho test.

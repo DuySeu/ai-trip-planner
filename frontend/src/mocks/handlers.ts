@@ -29,7 +29,6 @@ const MAX_NOTES = 2000;
 const MAX_MESSAGE = 4000;
 const MAX_TITLE = 80;
 const MAX_PLACES = 10;
-const RETENTION_MS = 30 * 86_400_000;
 const TITLE_LENGTH = 80;
 const DEFAULT_LIMIT = 50;
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -277,7 +276,6 @@ export const handlers = [
       plan_revision: 0,
       created_at: iso,
       updated_at: iso,
-      expires_at: new Date(mockDb.now().getTime() + RETENTION_MS).toISOString(),
       job_started_at: null,
     };
     mockDb.trips.push(trip);

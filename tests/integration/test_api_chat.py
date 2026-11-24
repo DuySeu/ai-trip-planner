@@ -46,7 +46,7 @@ def conversation(db_conn):
 
 # A ready Da Lat trip of the user at plan revision 1
 def ready_trip(db_conn: Any, user_id: UUID) -> TripRow:
-    trip = trips.create_trip(db_conn, user_id, DALAT_FIELDS, None, retention_days=30)
+    trip = trips.create_trip(db_conn, user_id, DALAT_FIELDS, None)
     return trips.save_plan(
         db_conn, trip.id, 0, dalat_plan().model_dump(mode="json"), Decimal("1000000"), False, "m"
     )
@@ -374,7 +374,7 @@ def test_rename_conversation_keeps_updated_at(db_pool, db_conn, conversation):
 
 def test_delete_conversation_removes_its_messages(db_pool, db_conn, conversation):
     messages.add_message(db_conn, conversation.id, "user", "hello")
-    trips.create_trip(db_conn, conversation.user_id, DALAT_FIELDS, None, 30)
+    trips.create_trip(db_conn, conversation.user_id, DALAT_FIELDS, None)
     client, _ = chat_client(db_pool, [])
 
     response = client.delete(f"/conversations/{conversation.id}")

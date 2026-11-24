@@ -1,7 +1,5 @@
 # REQUIREMENT FOR THIS PROJECT
 
-Design: `docs/superpowers/specs/2026-11-16-ai-trip-planner-design.md`.
-
 ## Tech Stack
 
 - Frontend: React, css, typescript (Vite)
@@ -27,7 +25,7 @@ Design: `docs/superpowers/specs/2026-11-16-ai-trip-planner-design.md`.
 ## Functional requirements
 
 - [x] Create a trip plan with user information include: time, budget, group of, style travel, destination
-- [x] A visitor who does not know where to go can chat to get destination ideas; the AI asks for missing basics, then suggests 3 destinations as cards (why it fits, estimated cost per person, best months), and "Plan this trip" fills the trip form
+- [x] A visitor who does not know where to go can chat to get destination ideas; a fixed 6-step questionnaire card asks for the missing basics (travel style, group size, budget, origin, when, how long), then the AI suggests up to 3 destinations as cards (why it fits, estimated cost per person, best months), and "Plan this trip" fills the trip form
 - [x] The trip form links to that chat ("Not sure where? Get ideas") with what the visitor already entered
 - [x] Destination is picked from a place search, anywhere in the world; Vietnam is the default
 - [x] Budget is in VND; a trip inside Vietnam uses VND only; a trip abroad uses two currencies, VND and the destination's local currency, with the exchange rate shown and saved with the plan
@@ -40,6 +38,8 @@ Design: `docs/superpowers/specs/2026-11-16-ai-trip-planner-design.md`.
 - [x] The Excel file keeps the template's sheets, formulas and validations, and its expected total matches the plan total
 - [x] Allow user to chat, asking about the plan created and ask AI to change base on user changed
 - [x] Chat can answer questions about the plan, give general travel advice, look up new information, and change the plan
+- [x] Chat can search hotels and tickets (flight, train, bus) for a place; when the open trip and the chat give no dates (or no origin for tickets), a card asks for them
+- [x] Chat can open a trip form prefilled from the conversation; Create makes the trip, Cancel closes the form
 - [x] One conversation is not tied to one task or one trip: it can discuss any of the visitor's trips and look for a new destination; edits apply to the trip open on screen
 - [x] Every change to a plan overwrites it; no history is kept
 - [x] Changing dates, number of travelers or origin re-plans the trip; a new destination is a new trip
@@ -61,6 +61,6 @@ Design: `docs/superpowers/specs/2026-11-16-ai-trip-planner-design.md`.
 - [x] Rate limits per IP and per name, a daily trip and message cap, and a global daily ceiling for AI and search calls
 - [x] Web content is treated as untrusted data in prompts; AI output can only change a plan through checked edit operations
 - [x] Inputs are validated at the API; errors return one JSON shape and never raw exception text
-- [x] Trips are deleted 30 days after their last activity; inactive names with no trips are freed after 90 days; IP addresses are not stored in the database
+- [x] Trips are kept until their user deletes them; inactive names with no trips are freed after 90 days; IP addresses are not stored in the database
 - [ ] JSON logs with request, trip and job ids; a log of every AI call (model, tokens, time, outcome); health and readiness endpoints
 - [x] Unit, integration and API tests with a fake AI model and fake search; the test suite makes no real external calls

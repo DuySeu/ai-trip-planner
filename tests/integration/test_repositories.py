@@ -68,7 +68,7 @@ def user(db_conn) -> UserRow:
 
 @pytest.fixture
 def trip(db_conn, user) -> TripRow:
-    return create_trip(db_conn, user.id, REQUEST, "THB", retention_days=30)
+    return create_trip(db_conn, user.id, REQUEST, "THB")
 
 
 def test_claim_user_returns_same_row_for_same_name_any_case(db_conn):
@@ -91,18 +91,17 @@ def test_create_trip_maps_request_to_columns(db_conn, user, trip):
     )
     assert trip.travel_styles == ["food", "culture"] and trip.budget_amount == Decimal("20000000")
     assert (trip.status, trip.plan, trip.plan_revision) == ("queued", None, 0)
-    assert trip.expires_at - trip.created_at == timedelta(days=30)
     assert count_trips_today(db_conn, user.id) == 1
 
 
 def test_create_trip_accepts_trip_request_json_dump(db_conn, user):
     request = TripRequest.model_validate(REQUEST)
-    row = create_trip(db_conn, user.id, request.model_dump(mode="json"), "THB", retention_days=30)
+    row = create_trip(db_conn, user.id, request.model_dump(mode="json"), "THB")
     assert row.budget_amount == request.budget_amount and row.start_date == request.start_date
 
 
 def test_list_trips_newest_first_and_paged(db_conn, user, trip):
-    newer = create_trip(db_conn, user.id, REQUEST, "THB", retention_days=30)
+    newer = create_trip(db_conn, user.id, REQUEST, "THB")
     assert [t.id for t in list_trips(db_conn, user.id, limit=10, offset=0)] == [newer.id, trip.id]
     assert [t.id for t in list_trips(db_conn, user.id, limit=1, offset=1)] == [trip.id]
 

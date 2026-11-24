@@ -3,7 +3,7 @@
 **This file is the design guide for this project. Read it fully before writing or changing any UI.**
 
 - Tokens live in `frontend/index.css`, the app's only stylesheet: the tokens, then `@theme inline` mapping them to Tailwind utilities. Never retype the values, never add a hex to a component.
-- Everything below is decided. This document is not a starting point to improve on; the direction was chosen from four alternatives that are still on record in `docs/design/ui-options.html`.
+- Everything below is decided. This document is not a starting point to improve on; the direction was chosen from four alternatives.
 - If something you need is not covered here, pick the smallest choice consistent with section 1, build it, and say in the chat what you decided so it can be added.
 - Direction changes edit this file in place. There is never a second version of it.
 - `frontend/ui-component-principles.md` holds the reusable minimum requirements for the components it covers (now the conversation sidebar and the chat input). A change to the behaviour, structure, states or API of one of those components updates that file in the same change, so the two never disagree. A component added to it follows the same rule from then on.
@@ -24,7 +24,7 @@ Extending this direction to something not covered below means asking "which choi
 
 ## 2 Tokens
 
-Full values, both modes, live in `frontend/index.css` - do not retype them. Ported from `docs/design/option-tokens/A-lagoon.css`.
+Full values, both modes, live in `frontend/index.css` - do not retype them.
 
 | Token | Role |
 |---|---|
@@ -195,6 +195,11 @@ Written in tokens and states. The shared ones (button, card, badge, banner, fiel
 | Chat composer | pill `--muted`, no border, no shadow; it floats over the thread (sticky at the bottom of the thread's scroll area) with a transparent surround, so messages scroll behind it and fade out (a `from-transparent` to page-fill gradient, 24px above the pill down to the strip); the disclaimer strip below it has the page fill (`--background` on ChatPage, `--card` in the trip chat panel). On ChatPage the pill is 50% of the main area wide from 640px, centred; full width in the trip panel and on phones | `999px` pill on one line; once the text wraps, `calc(var(--radius) + 4px)` with the text on top and the buttons in a row below, until the text is cleared | single line: `plus` (attach), textarea, ghost model picker ("Auto" + `chevron-down`, hidden while the composer is under 448px wide, a container query on the pill wrapper), `mic`, send (40px round `--primary`, 20px `arrow-up`, `BUTTON.iconPrimary`). Wrapped: textarea (grows to 200px) with a `maximize-2` / `minimize-2` toggle at its top right that grows it to 40-60dvh, then `plus` left and model, mic, send right. Attach, model and mic are `aria-disabled` with a "Coming soon" tooltip until the backend supports them. Disclaimer 12px `--muted-foreground`, centred | focus-within: 3px `--ring` 30% halo, painted above the disclaimer strip · disabled 60% opacity, with the quota message when `quota_exhausted` |
 | Chat welcome panel | none | - | shown while the thread is empty and the chat is enabled, centred in the thread, enters with `animate-pop-in`: 56px `--accent` circle with a 28px `sparkles` icon and an 8px `--accent` 40% halo, title (page title on ChatPage, section title in the trip panel), one 16px `--muted-foreground` line, then example prompts as cards that send on click: `--card`, 1px `--border`, `--radius`, padding `--space-3`, a 36px `--muted` circle with a 20px topic icon (`cloud-sun`, `bed-double`, `train-front` in a trip; `waves`, `users`, `plane` in discovery), the prompt in 14px, and a 16px `arrow-up-right` shown on hover; 3 columns from 640px on ChatPage (max 768px), 1 column in the trip panel | card hover: `--input` border, `--accent` fill, icon circle turns `--card` with a `--primary` icon · active `scale(0.99)` |
 | Suggestion card | card | per section 4 | place + country, "why it fits", days, cost per person + "Estimate" badge, best months, "Plan this trip" primary button | - |
+| Questionnaire card (`DiscoverQuestionnaire`) | card | per section 4 | "Question n of 6" in 12px `--muted-foreground` over a 6-segment bar (`--primary` answered, `--muted` the rest), the question as card title, then choice chips (step 1 checkboxes, steps 2-6 single-choice `aria-pressed` chips), a typed field with an OK secondary button on steps 2-5, a notes textarea on step 6; footer above a `--border` rule: Back and Skip ghost, "Suggest now" primary at the right | done: "Your answers" list, question in `--muted-foreground`, answer 500; done with no answer renders nothing (the message text shows alone) |
+| Booking dates card (`BookingDates`) | `--card`, 1px `--border`, no shadow | 8px | padding `--space-4`; two date fields side by side from 640px (check-in / check-out, or depart / return), an origin field for tickets, "Search" primary | checked before sending, the error as a 14px `--destructive` line; after sending: 16px `calendar-check` + "Dates sent" in `--muted-foreground` |
+| Card slider (`CardSlider`) | none | - | 14px `--muted-foreground` title and a dates line, previous / next icon buttons from 640px; cards 288px wide (max 85%) in one row that scrolls sideways and snaps to a card | scroll is instant under `prefers-reduced-motion: reduce` |
+| Hotel card, ticket card (`HotelCard`, `FlightCard`) | card | per section 4 | name or carrier (card title), 14px `--muted-foreground` meta lines with icons (area and stars, or mode, route and duration), price per night or "from" price, highlights as muted badges, "View on <site>" `--primary` link at the bottom | no price: "No price shown" line |
+| Trip form in chat (`ChatTripForm`) | `--card`, 1px `--border`, no shadow | 8px | padding `--space-4`; the trip form prefilled from the chat with Create and Cancel | created: progress, then a link to the trip; canceled: a card with the trip facts |
 | Empty state | none | - | 48px icon in `--muted-foreground`, one 16px line, one primary button | - |
 | Skeleton | `--muted` | `--radius` | matches the block it replaces | no shimmer; static fill |
 
@@ -227,7 +232,7 @@ Written in tokens and states. The shared ones (button, card, badge, banner, fiel
 A UI change is acceptable when these pass:
 
 ```bash
-node .claude/skills/ui-planning/scripts/contrast-check.mjs frontend/index.css --pair warning-foreground:warning
+node .agents/skills/ui-planning/scripts/contrast-check.mjs frontend/index.css --pair warning-foreground:warning
 cd frontend && npm test && npm run lint && npm run build
 ```
 

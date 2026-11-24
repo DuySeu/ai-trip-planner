@@ -18,7 +18,6 @@ const STAGES = [
   { status: "planning", until: 10000 },
 ] as const;
 const DEFAULT_TOKEN_GAP_MS = 30;
-const RETENTION_MS = 30 * 86_400_000;
 
 // Head start that puts a re-plan straight into researching
 export const REPLAN_HEAD_START_MS = 2000;
@@ -103,7 +102,6 @@ export const mockDb = {
       over_budget: null,
       plan_revision: 0,
       updated_at: iso,
-      expires_at: new Date(now().getTime() + RETENTION_MS).toISOString(),
       job_started_at: null,
     };
     const domesticStart = addDays(today, 14);

@@ -2,14 +2,12 @@
 INSERT INTO trips (
     user_id, destination_name, destination_country, destination_lat,
     destination_lon, origin, start_date, end_date, travelers, travel_styles,
-    budget_amount, budget_scope, local_currency, language, notes, status,
-    expires_at
+    budget_amount, budget_scope, local_currency, language, notes, status
 ) VALUES (
     %(user_id)s, %(destination_name)s, %(destination_country)s,
     %(destination_lat)s, %(destination_lon)s, %(origin)s, %(start_date)s, %(end_date)s,
     %(travelers)s, %(travel_styles)s, %(budget_amount)s,
-    %(budget_scope)s, %(local_currency)s, %(language)s, %(notes)s, 'queued',
-    now() + make_interval(days => %(retention_days)s)
+    %(budget_scope)s, %(local_currency)s, %(language)s, %(notes)s, 'queued'
 )
 RETURNING *;
 
@@ -29,7 +27,7 @@ UPDATE trips SET status = %(status)s, failure_reason = %(failure_reason)s, updat
 WHERE id = %(id)s;
 
 -- name: touch
-UPDATE trips SET updated_at = now(), expires_at = now() + make_interval(days => %(retention_days)s)
+UPDATE trips SET updated_at = now()
 WHERE id = %(id)s;
 
 -- name: delete_trip
@@ -76,7 +74,3 @@ UPDATE trips SET
     notes = %(notes)s
 WHERE id = %(id)s AND plan_revision = %(base_revision)s
 RETURNING *;
-
--- name: delete_expired_trips
--- Jobs and research rows go with the trip (cascade); llm_calls keep their rows with a null trip
-DELETE FROM trips WHERE expires_at < %(now)s;

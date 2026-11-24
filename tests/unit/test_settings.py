@@ -24,7 +24,6 @@ def test_load_settings_reads_required_and_defaults():
     assert s.planner_models == ("a/b:free", "c/d:free")
     assert s.llm_calls_per_job == 6
     assert s.trust_proxy_headers is False
-    assert s.retention_days == 30
     assert s.cors_origins == ("http://localhost:5173",)
     assert (s.db.host, s.db.port, s.db.sslmode) == ("localhost", 5432, "prefer")
 

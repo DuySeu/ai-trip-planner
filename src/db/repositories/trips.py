@@ -47,7 +47,6 @@ class TripRow:
     plan_revision: int
     created_at: datetime
     updated_at: datetime
-    expires_at: datetime
 
 
 # Insert a queued trip from a TripRequest dict (model_dump(mode="json") shape)
@@ -56,13 +55,11 @@ def create_trip(
     user_id: UUID,
     request: Mapping[str, Any],
     local_currency: str | None,
-    retention_days: int,
 ) -> TripRow:
     params = {
         **_request_params(request),
         "user_id": user_id,
         "local_currency": local_currency,
-        "retention_days": retention_days,
     }
     with conn.cursor(row_factory=class_row(TripRow)) as cur:
         row = cur.execute(QUERIES["create_trip"], params).fetchone()
@@ -102,10 +99,9 @@ def set_status(
         raise NotFound(f"trip {trip_id}")
 
 
-# Mark the trip as used now and push its expiry retention_days ahead
-def touch(conn: Connection[Any], trip_id: UUID, retention_days: int) -> None:
-    params = {"id": trip_id, "retention_days": retention_days}
-    if conn.execute(QUERIES["touch"], params).rowcount == 0:
+# Mark the trip as used now
+def touch(conn: Connection[Any], trip_id: UUID) -> None:
+    if conn.execute(QUERIES["touch"], {"id": trip_id}).rowcount == 0:
         raise NotFound(f"trip {trip_id}")
 
 

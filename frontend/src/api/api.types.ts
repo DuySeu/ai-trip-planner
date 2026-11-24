@@ -187,7 +187,6 @@ export interface Trip {
   plan_revision: number;
   created_at: string;
   updated_at: string;
-  expires_at: string;
 }
 
 // One row of GET /users/{id}/trips

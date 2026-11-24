@@ -98,7 +98,7 @@ def make_rig(
 def queued_trip(db_conn: Any) -> TripRow:
     user = claim_user(db_conn, "Duy")
     request = bangkok_request().model_dump(mode="json")
-    return create_trip(db_conn, user.id, request, "THB", retention_days=30)
+    return create_trip(db_conn, user.id, request, "THB")
 
 
 # A ready trip holding the Bangkok plan at revision 1
@@ -452,14 +452,14 @@ def test_worker_finishes_the_running_job_before_stopping(db_pool, db_conn, queue
     assert get_trip(db_conn, queued_trip.id).status == "ready"
 
 
-def test_worker_runs_cleanup_at_start_and_deletes_expired_trips(db_pool, db_conn, queued_trip):
-    # The fake clock is in the future of the trip's expiry
-    db_conn.execute("UPDATE trips SET expires_at = %s", (NOW - timedelta(days=1),))
+def test_worker_runs_cleanup_at_start_and_keeps_old_trips(db_pool, db_conn, queued_trip, caplog):
+    db_conn.execute("UPDATE trips SET updated_at = %s", (NOW - timedelta(days=365),))
     rig = make_rig(db_pool, [])
 
-    run_worker_until(rig, lambda: db_conn.execute("SELECT count(*) FROM trips").fetchone()[0] == 0)
+    with caplog.at_level(logging.INFO):
+        run_worker_until(rig, lambda: "cleanup deleted" in caplog.text)
 
-    assert db_conn.execute("SELECT count(*) FROM trips").fetchone()[0] == 0
+    assert db_conn.execute("SELECT count(*) FROM trips").fetchone()[0] == 1
 
 
 def test_worker_repeats_cleanup_when_the_interval_has_passed(db_pool, db_conn, caplog):

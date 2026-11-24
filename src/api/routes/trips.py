@@ -44,7 +44,6 @@ def create_trip(body: CreateTripBody, conn: Conn, deps: Deps) -> ApiResponse[Tri
         body.user_id,
         request,
         local_currency_for(body.destination.country_code),
-        deps.settings.retention_days,
     )
     jobs.enqueue(conn, trip.id)
 

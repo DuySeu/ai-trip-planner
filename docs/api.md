@@ -236,8 +236,7 @@ Output 200, `data` là `TripOut`:
   "stage": null,
   "failure_reason": null,
   "plan_revision": 1,
-  "plan": {},
-  "expires_at": "2026-12-19T03:00:00Z"
+  "plan": {}
 }
 ```
 
@@ -247,7 +246,6 @@ Output 200, `data` là `TripOut`:
 - `failure_reason`: lý do lỗi khi `status = failed`.
 - `plan_revision`: tăng mỗi lần plan bị ghi đè; gửi lại giá trị này ở `POST /chat` để tránh ghi đè lên plan mới hơn.
 - `plan`: `null` khi chưa xong. Cấu trúc theo `Plan` trong `src/domain/plan.py:148`: `title`, `summary`, `currencies`, `days` (mỗi ngày có `date`, `theme`, `weather`, `items`), `transport_options`, `accommodation`, `checklist`, `warnings`.
-- `expires_at`: thời điểm trip bị xóa nếu không được dùng tiếp.
 
 Lỗi: 404 khi không có trip.
 

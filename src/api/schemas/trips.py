@@ -53,7 +53,6 @@ class TripOut(TripSummary):
     failure_reason: str | None
     plan_revision: int
     plan: dict[str, Any] | None
-    expires_at: datetime
 
 
 # The place a trip row holds
@@ -97,7 +96,6 @@ def trip_out(row: TripRow, stage: str | None) -> TripOut:
         failure_reason=row.failure_reason,
         plan_revision=row.plan_revision,
         plan=row.plan,
-        expires_at=row.expires_at,
     )
 
 
