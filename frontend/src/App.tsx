@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "rea
 import { LanguageProvider } from "./i18n/LanguageProvider.tsx";
 import { AppShell } from "./layout/AppShell.tsx";
 import { ChatPage } from "./pages/ChatPage.tsx";
+import { DashboardPage } from "./pages/DashboardPage.tsx";
 import { HomePage } from "./pages/HomePage.tsx";
 import { NamePage } from "./pages/NamePage.tsx";
 import { NewTripPage } from "./pages/NewTripPage.tsx";
@@ -43,6 +44,7 @@ export function AppRoutes() {
         <Route path="/trips/new" element={<NewTripPage />} />
         <Route path="/trips/:tripId" element={<TripPage />} />
         <Route path="/chat/:conversationId?" element={<ChatPage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
       </Route>
       <Route path="*" element={<UnknownPath />} />
     </Routes>

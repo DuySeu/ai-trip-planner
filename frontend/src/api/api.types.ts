@@ -321,3 +321,56 @@ export type ChatEvent =
   | { type: "metadata"; data: { message_id: string | null; metadata: MessageMetadata } }
   | { type: "error"; data: ErrorBody }
   | { type: "done"; data: Record<string, never> };
+
+// GET /stats/health and GET /stats/usage (dashboard)
+export type UsageDays = 7 | 30 | 90;
+
+export interface StatCount {
+  key: string;
+  count: number;
+}
+
+export interface HealthStats {
+  generated_at: string;
+  llm_today: { calls: number; input_tokens: number; output_tokens: number; ceiling_new_trips: number; ceiling_chat: number };
+  llm_last_hour: { calls: number; errors: number; outcomes: StatCount[]; p50_latency_ms: number | null; p95_latency_ms: number | null };
+  jobs: { queued: number; running: number; oldest_queued_s: number | null };
+  plans_last_day: {
+    succeeded: number;
+    p50_s: number | null;
+    p95_s: number | null;
+    failed: number;
+    last_failure: { reason: string | null; finished_at: string } | null;
+  };
+  blocks: { service: string; blocked_until: string }[];
+}
+
+export interface DayCount {
+  day: string;
+  trips: number;
+  messages: number;
+}
+
+export interface UsageStats {
+  days: UsageDays;
+  users: { total: number; new: number; active: number };
+  trips: {
+    created: number;
+    by_status: StatCount[];
+    domestic: number;
+    abroad: number;
+    avg_days: number | null;
+    avg_travelers: number | null;
+    median_budget_per_person_vnd: number | null;
+    with_plan: number;
+    over_budget: number;
+  };
+  daily: DayCount[];
+  conversations: number;
+  messages: number;
+  intents: StatCount[];
+  trip_forms: StatCount[];
+  destinations: { name: string; country: string; trips: number }[];
+  styles: StatCount[];
+  models: { model_id: string; calls: number; errors: number }[];
+}

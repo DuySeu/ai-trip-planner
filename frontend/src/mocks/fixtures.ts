@@ -1,6 +1,7 @@
 import type {
   Category,
   FlightCard,
+  HealthStats,
   HotelCard,
   ItemStatus,
   Place,
@@ -9,6 +10,8 @@ import type {
   PriceBasis,
   SuggestionCard,
   TransportMode,
+  UsageDays,
+  UsageStats,
 } from "../api/api.types.ts";
 import { addDays } from "../format/dates.ts";
 
@@ -289,4 +292,75 @@ function layOut(start: string, days: number, recipe: Recipe): PlanDay[] {
       })),
     };
   });
+}
+
+// GET /stats/health: near the new-trip ceiling, a few errors in the last hour, nothing blocked
+export const HEALTH_STATS: HealthStats = {
+  generated_at: "2026-11-24T12:00:00Z",
+  llm_today: { calls: 412, input_tokens: 820_000, output_tokens: 190_000, ceiling_new_trips: 800, ceiling_chat: 950 },
+  llm_last_hour: {
+    calls: 64,
+    errors: 3,
+    outcomes: [
+      { key: "ok", count: 61 },
+      { key: "rate_limited", count: 3 },
+    ],
+    p50_latency_ms: 2100,
+    p95_latency_ms: 8200,
+  },
+  jobs: { queued: 1, running: 1, oldest_queued_s: 40 },
+  plans_last_day: { succeeded: 18, p50_s: 48, p95_s: 110, failed: 1, last_failure: { reason: "generation_failed", finished_at: "2026-11-24T10:20:00Z" } },
+  blocks: [],
+};
+
+// GET /stats/usage: a daily series of `days` entries ending today
+export function usageStats(days: UsageDays, today: string): UsageStats {
+  return {
+    days,
+    users: { total: 310, new: 42, active: 96 },
+    trips: {
+      created: 118,
+      by_status: [
+        { key: "ready", count: 107 },
+        { key: "failed", count: 7 },
+        { key: "planning", count: 4 },
+      ],
+      domestic: 85,
+      abroad: 33,
+      avg_days: 4.2,
+      avg_travelers: 2.3,
+      median_budget_per_person_vnd: 6_000_000,
+      with_plan: 107,
+      over_budget: 19,
+    },
+    daily: Array.from({ length: days }, (_, i) => ({ day: addDays(today, i - days + 1), trips: (i * 7) % 9, messages: (i * 13) % 50 })),
+    conversations: 204,
+    messages: 1204,
+    intents: [
+      { key: "advice", count: 600 },
+      { key: "discover", count: 210 },
+      { key: "booking_search", count: 150 },
+      { key: "create_trip", count: 90 },
+      { key: "edit_plan", count: 60 },
+    ],
+    trip_forms: [
+      { key: "created", count: 30 },
+      { key: "open", count: 15 },
+      { key: "canceled", count: 6 },
+    ],
+    destinations: [
+      { name: "Đà Lạt", country: "VN", trips: 21 },
+      { name: "Bangkok", country: "TH", trips: 14 },
+      { name: "Phú Quốc", country: "VN", trips: 9 },
+    ],
+    styles: [
+      { key: "food", count: 72 },
+      { key: "nature", count: 52 },
+      { key: "culture", count: 45 },
+    ],
+    models: [
+      { model_id: "meta-llama/llama-3.3-70b-instruct:free", calls: 4100, errors: 250 },
+      { model_id: "qwen/qwen-2.5-72b-instruct:free", calls: 2300, errors: 260 },
+    ],
+  };
 }

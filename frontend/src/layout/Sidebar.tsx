@@ -1,4 +1,4 @@
-import { Lightbulb, Map as MapIcon, UserRound, X } from "lucide-react";
+import { Gauge, Lightbulb, Map as MapIcon, UserRound, X } from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink, useMatch, useNavigate } from "react-router";
 import type { Conversation } from "../api/api.types.ts";
@@ -85,6 +85,12 @@ export function Sidebar({ onClose }: Props) {
             <NavLink to="/" end className={({ isActive }) => `${NAV_LINK} ${isActive ? ACTIVE : ""}`} onClick={onClose}>
               <MapIcon size={16} strokeWidth={1.75} aria-hidden="true" />
               {t("nav.myTrips")}
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/dashboard" className={({ isActive }) => `${NAV_LINK} ${isActive ? ACTIVE : ""}`} onClick={onClose}>
+              <Gauge size={16} strokeWidth={1.75} aria-hidden="true" />
+              {t("nav.dashboard")}
             </NavLink>
           </li>
         </ul>

@@ -19,7 +19,7 @@ import { apiUrl } from "../api/client.ts";
 import { addDays, todayInVietnam, tripDays } from "../format/dates.ts";
 import { COUNTRY_CURRENCY } from "../format/money.ts";
 import { type ScriptFollowUp, scriptReply } from "./chatScript.ts";
-import { PLACES } from "./fixtures.ts";
+import { HEALTH_STATS, PLACES, usageStats } from "./fixtures.ts";
 import { type MockMessage, type MockTrip, mockDb, REPLAN_HEAD_START_MS } from "./mockDb.ts";
 
 const MAX_NAME = 50;
@@ -227,6 +227,16 @@ export const handlers = [
     return new HttpResponse(sse(conversation.id, reply.events, reply.intent, request.signal), {
       headers: { "Content-Type": "text/event-stream" },
     });
+  }),
+
+  // GET /stats/health - Dashboard health numbers
+  http.get(apiUrl("/stats/health"), () => ok(HEALTH_STATS)),
+
+  // GET /stats/usage - Dashboard usage numbers for 7, 30 or 90 days
+  http.get(apiUrl("/stats/usage"), ({ request }) => {
+    const days = Number(new URL(request.url).searchParams.get("days") ?? "30");
+    if (days !== 7 && days !== 30 && days !== 90) return fail(422, "invalid_request", "query.days: Input should be 7, 30 or 90");
+    return ok(usageStats(days, todayInVietnam(mockDb.now())));
   }),
 
   // GET /places - Destination search, ignoring case and accents

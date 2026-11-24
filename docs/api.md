@@ -61,6 +61,8 @@ Văn bản tự do (tên, địa điểm, ghi chú, tin nhắn) được chuẩn
 | PATCH | `/conversations/{conversation_id}/messages/{message_id}` | Hủy một form tạo trip trong chat |
 | DELETE | `/conversations/{conversation_id}` | Xóa hội thoại và tin nhắn |
 | POST | `/chat` | Gửi tin nhắn, nhận câu trả lời dạng SSE |
+| GET | `/stats/health` | Sức khỏe hệ thống: lượt gọi LLM so với trần, lỗi, hàng đợi job, provider bị chặn |
+| GET | `/stats/usage` | Số liệu người dùng, trip và chat trong 7, 30 hoặc 90 ngày |
 
 ## Health
 
@@ -482,3 +484,59 @@ data: <json>
 | `done` | `{}` | Kết thúc câu trả lời |
 
 Nếu client ngắt kết nối giữa chừng, phần câu trả lời đã gửi vẫn được lưu vào hội thoại.
+
+## Stats
+
+Số liệu cho trang `/dashboard`. Hai endpoint này không cần xác thực (như mọi endpoint khác), nên chỉ trả số đếm và nhãn gộp (tên điểm đến, model, intent), không trả tên user, id, ghi chú trip, `jobs.last_error` hay `quota_blocks.reason`. Trip user đã xóa không được tính; tin nhắn của user không có trip bị xóa sau 90 ngày không hoạt động.
+
+### GET /stats/health
+
+Không có tham số. Số liệu tính theo giờ của database; "hôm nay" của LLM là ngày UTC, giống trần quota.
+
+Output 200:
+
+```json
+{
+  "generated_at": "2026-11-24T12:00:00Z",
+  "llm_today": { "calls": 812, "input_tokens": 1200000, "output_tokens": 340000, "ceiling_new_trips": 800, "ceiling_chat": 950 },
+  "llm_last_hour": { "calls": 120, "errors": 17, "outcomes": [{ "key": "ok", "count": 103 }], "p50_latency_ms": 2100.0, "p95_latency_ms": 8200.0 },
+  "jobs": { "queued": 3, "running": 1, "oldest_queued_s": 120 },
+  "plans_last_day": { "succeeded": 40, "p50_s": 48.0, "p95_s": 110.0, "failed": 2, "last_failure": { "reason": "generation_failed", "finished_at": "2026-11-24T11:20:00Z" } },
+  "blocks": [{ "service": "openrouter", "blocked_until": "2026-11-25T00:00:00Z" }]
+}
+```
+
+- `llm_today.calls`: tổng lượt gọi từ 00:00 UTC. Trip mới bị từ chối khi đạt `ceiling_new_trips`, chat bị từ chối khi đạt `ceiling_chat`.
+- `llm_last_hour`: `errors` là các call có `outcome` khác `ok`; percentile là `null` khi không có call nào có latency.
+- `jobs.oldest_queued_s`: tuổi (giây) của job đang chờ lâu nhất, `null` khi không có job chờ.
+- `plans_last_day`: các job kết thúc trong 24 giờ; thời gian tạo plan tính từ lúc vào hàng đợi; `last_failure.reason` là `trips.failure_reason`, `null` khi không có job lỗi.
+- `blocks`: provider đang bị chặn.
+
+### GET /stats/usage
+
+Query: `days` = `7`, `30` hoặc `90` (mặc định `30`); giá trị khác trả 422. Khoảng thời gian là `days` ngày lịch Việt Nam gần nhất, tính cả hôm nay.
+
+Output 200:
+
+```json
+{
+  "days": 30,
+  "users": { "total": 310, "new": 42, "active": 96 },
+  "trips": { "created": 118, "by_status": [{ "key": "ready", "count": 107 }], "domestic": 85, "abroad": 33, "avg_days": 4.2, "avg_travelers": 2.3, "median_budget_per_person_vnd": 6000000.0, "with_plan": 107, "over_budget": 19 },
+  "daily": [{ "day": "2026-11-24", "trips": 5, "messages": 40 }],
+  "conversations": 204,
+  "messages": 1204,
+  "intents": [{ "key": "advice", "count": 600 }],
+  "trip_forms": [{ "key": "created", "count": 30 }],
+  "destinations": [{ "name": "Đà Lạt", "country": "VN", "trips": 21 }],
+  "styles": [{ "key": "food", "count": 72 }],
+  "models": [{ "model_id": "a/b:free", "calls": 4100, "errors": 250 }]
+}
+```
+
+- `users.active`: user có `last_seen_at` trong khoảng.
+- `trips`: trip tạo trong khoảng. `median_budget_per_person_vnd` là trung vị ngân sách mỗi người (VND), `null` khi không có trip; `over_budget` đếm trong các trip đã có plan (`with_plan`).
+- `daily`: đủ `days` phần tử, ngày trống là 0; `messages` chỉ đếm tin nhắn của user.
+- `messages`: tin nhắn của user; `intents`: tin nhắn trả lời theo intent; `trip_forms`: form tạo trip trong chat theo trạng thái (`open`, `created`, `canceled`).
+- `destinations`: tối đa 10, nhiều trip nhất trước.
+- Các list `{ key, count }` xếp theo `count` giảm dần, rồi theo `key`.
