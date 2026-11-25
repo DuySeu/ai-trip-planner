@@ -4,6 +4,7 @@ import type {
   HealthStats,
   HotelCard,
   ItemStatus,
+  ModelsInfo,
   Place,
   Plan,
   PlanDay,
@@ -293,6 +294,14 @@ function layOut(start: string, days: number, recipe: Recipe): PlanDay[] {
     };
   });
 }
+
+// GET /models: two OpenRouter chat models; "Auto" stands for the first
+export const LIGHTNING_MODEL = { id: "nvidia/nemotron-3.5-lightning:free", label: "NVIDIA: Nemotron 3.5 Lightning (free)" };
+export const MODELS: ModelsInfo = {
+  provider: "openrouter",
+  default_model: "google/gemma-4-31b-it:free",
+  models: [{ id: "google/gemma-4-31b-it:free", label: "Google: Gemma 4 31B (free)" }, LIGHTNING_MODEL],
+};
 
 // GET /stats/health: near the new-trip ceiling, a few errors in the last hour, nothing blocked
 export const HEALTH_STATS: HealthStats = {

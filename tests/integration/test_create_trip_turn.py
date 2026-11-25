@@ -21,7 +21,7 @@ from models.model_router import ModelRouter
 from research.places import Place
 from tests.fakes import FakeProvider, FakeSearch, FakeSink
 
-MODEL = ModelId.GEMMA_4_31B_IT
+MODEL = ModelId.LING_3_2_FLASH
 NOW = datetime(2026, 11, 17, 10, 0, tzinfo=UTC)
 ENV = {
     "DB_USER": "u",

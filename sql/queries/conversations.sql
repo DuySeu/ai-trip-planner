@@ -1,5 +1,6 @@
 -- name: create_conversation
-INSERT INTO conversations (user_id, request_draft) VALUES (%(user_id)s, %(draft)s)
+INSERT INTO conversations (user_id, request_draft, chat_model)
+VALUES (%(user_id)s, %(draft)s, %(chat_model)s)
 RETURNING *;
 
 -- name: get_conversation
@@ -26,6 +27,10 @@ UPDATE conversations SET updated_at = now() WHERE id = %(id)s;
 -- name: rename_conversation
 -- updated_at stays, so a rename does not reorder the list
 UPDATE conversations SET title = %(title)s WHERE id = %(id)s RETURNING *;
+
+-- name: set_chat_model
+-- updated_at stays, like a rename
+UPDATE conversations SET chat_model = %(chat_model)s WHERE id = %(id)s RETURNING *;
 
 -- name: set_title_if_missing
 UPDATE conversations SET title = %(title)s WHERE id = %(id)s AND title IS NULL;

@@ -12,8 +12,8 @@ from models.llm_factory import ProviderCallError
 from models.model_router import CallBudget, CallContext, ModelRouter, call_json, extract_json_object
 from tests.fakes import FakeProvider, FakeSink
 
-MODEL_A = ModelId.GEMMA_4_31B_IT
-MODEL_B = ModelId.NEMOTRON_3_SUPER_120B_A12B
+MODEL_A = ModelId.LING_3_2_FLASH
+MODEL_B = ModelId.NEMOTRON_3_5_SUPER_VL
 MESSAGES = [{"role": "user", "content": "give me a"}]
 CTX = CallContext()
 BOTH = (MODEL_A, MODEL_B)

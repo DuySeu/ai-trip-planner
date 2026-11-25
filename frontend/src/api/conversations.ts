@@ -19,9 +19,39 @@ export function useUserConversations(userId: string) {
   });
 }
 
-// POST /conversations - start a conversation, optionally carrying the form's fields as a draft
-export async function createConversation(body: { user_id: string; draft: RequestDraft | null }): Promise<Conversation> {
+// POST /conversations - start a conversation, optionally carrying the form's fields as a draft and a picked model
+export async function createConversation(body: {
+  user_id: string;
+  draft: RequestDraft | null;
+  chat_model?: string | null;
+}): Promise<Conversation> {
   return (await apiRequest<Conversation>("/conversations", { method: "POST", body: JSON.stringify(body) })).data;
+}
+
+// PATCH /conversations/{id} - pick the chat model (null is "Auto"), then update every cached copy
+export function useSetChatModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ conversationId, chatModel }: { conversationId: string; chatModel: string | null }) =>
+      (
+        await apiRequest<Conversation>(`/conversations/${conversationId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ chat_model: chatModel }),
+        })
+      ).data,
+    onSuccess: (updated) => {
+      queryClient.setQueriesData<Conversation[]>({ queryKey: [...conversationKeys.all, "list"] }, (rows) =>
+        rows?.map((row) => (row.id === updated.id ? updated : row)),
+      );
+      queryClient.setQueryData<ConversationDetail>(conversationKeys.detail(updated.id), (detail) =>
+        detail ? { ...detail, chat_model: updated.chat_model } : detail,
+      );
+    },
+    // A 422 means the model is no longer offered (the server's list changed): reload the list
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 422) void queryClient.invalidateQueries({ queryKey: ["models"] });
+    },
+  });
 }
 
 // PATCH /conversations/{id} - rename, then update every cached copy; the list order does not change

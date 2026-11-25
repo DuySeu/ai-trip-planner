@@ -92,9 +92,15 @@ Minimum requirements a component must meet before it ships, written so they carr
 - It is disabled when the trimmed text is empty, when the text is over the length limit, while a reply is streaming, and while the chat is disabled.
 - Over the limit [4000 characters], a line under the composer states the limit and the current count.
 
+### Model picker
+
+- The ghost button shows the conversation's model label, or "Auto" when it has none or its model is no longer offered; the label truncates. It opens a raised menu upward (`menuitemradio` items, the current one checked with `check` [16px]): "Auto" first, then the models of `GET /models`. Opening focuses the checked item; arrow keys move and wrap, Home and End jump; Escape or a pick closes it with focus back on the button, a press outside just closes it.
+- A pick saves on the conversation (`PATCH /conversations/{id}`); before the first message it is held and sent with `POST /conversations`.
+- When `GET /models` returns no models (a provider without a list), the picker stays a "Coming soon" control like attach and mic.
+
 ### Features not built yet
 
-- Attach, model picker and mic stay visible but use `aria-disabled="true"` instead of `disabled`, so they stay focusable and show a "Coming soon" tooltip. They are dimmed, show the not-allowed cursor, and have no hover fill.
+- Attach and mic (and the model picker when there are no models) stay visible but use `aria-disabled="true"` instead of `disabled`, so they stay focusable and show a "Coming soon" tooltip. They are dimmed, show the not-allowed cursor, and have no hover fill.
 
 ### Floating over the thread
 

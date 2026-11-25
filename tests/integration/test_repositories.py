@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -13,6 +14,7 @@ from db.repositories.conversations import (
     get_conversation,
     list_conversations,
     save_draft,
+    set_chat_model,
     touch_conversation,
 )
 from db.repositories.jobs import active_job, enqueue, finish, lease_next, requeue
@@ -211,6 +213,20 @@ def test_list_conversations_newest_first(db_conn, user):
     assert [c.id for c in list_conversations(db_conn, user.id)] == [newer.id, older.id]
     touch_conversation(db_conn, older.id)
     assert [c.id for c in list_conversations(db_conn, user.id)] == [older.id, newer.id]
+
+
+def test_create_conversation_keeps_the_chosen_model(db_conn, user):
+    assert create_conversation(db_conn, user.id, None, "a/b:free").chat_model == "a/b:free"
+    assert create_conversation(db_conn, user.id, None).chat_model is None
+
+
+def test_set_chat_model_sets_and_resets_without_touching_updated_at(db_conn, user):
+    conversation = create_conversation(db_conn, user.id, None)
+    chosen = set_chat_model(db_conn, conversation.id, "a/b:free")
+    assert (chosen.chat_model, chosen.updated_at) == ("a/b:free", conversation.updated_at)
+    assert set_chat_model(db_conn, conversation.id, None).chat_model is None
+    with pytest.raises(NotFound):
+        set_chat_model(db_conn, uuid4(), "a/b:free")
 
 
 def test_save_draft_replaces_draft(db_conn, user):

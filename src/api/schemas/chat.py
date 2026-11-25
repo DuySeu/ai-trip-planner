@@ -43,11 +43,23 @@ TitleText = Annotated[str, _required_text(MAX_TITLE_CHARS)]
 class CreateConversationBody(BaseModel):
     user_id: UUID
     draft: Annotated[dict[str, Any] | None, AfterValidator(_clean_draft)] = None
+    # Checked against the provider's chat models by the route; null means "Auto"
+    chat_model: str | None = None
 
 
-# Body of PATCH /conversations/{id}
-class RenameBody(BaseModel):
-    title: TitleText
+# Body of PATCH /conversations/{id}: a new title, a chat model (null resets to "Auto"), or both
+class UpdateConversationBody(BaseModel):
+    title: TitleText | None = None
+    chat_model: str | None = None
+
+    # At least one field; an explicit null chat_model counts, a null title does not
+    @model_validator(mode="after")
+    def check_fields(self) -> UpdateConversationBody:
+        if "title" in self.model_fields_set and self.title is None:
+            raise ValueError("title must not be null")
+        if not self.model_fields_set:
+            raise ValueError("send title or chat_model")
+        return self
 
 
 # Body of PATCH /conversations/{id}/messages/{id} that cancels an open trip form
@@ -102,6 +114,7 @@ class ConversationOut(BaseModel):
     user_id: UUID
     title: str | None
     request_draft: dict[str, Any] | None
+    chat_model: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -118,6 +131,7 @@ def conversation_out(row: ConversationRow) -> ConversationOut:
         user_id=row.user_id,
         title=row.title,
         request_draft=row.request_draft,
+        chat_model=row.chat_model,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

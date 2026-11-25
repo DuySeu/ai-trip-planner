@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from core.config import config
+from core.constants import ModelId
 from core.settings import load_settings
-from core.wiring import build_llm
+from core.wiring import build_llm, build_router
 from models.provider import BedrockProvider, OpenAIProvider, OpenRouterProvider
 from tests.unit.test_settings import MIN_ENV
 
@@ -31,3 +34,14 @@ def test_bedrock_gets_the_output_token_limit_from_settings():
     llm = build_llm(load_settings(env))
     assert isinstance(llm, BedrockProvider)
     assert llm._max_tokens == 2048
+
+
+def test_build_router_allows_only_the_providers_catalog_as_chat_choices():
+    settings = load_settings({**MIN_ENV, "LLM_PROVIDER": "bedrock"})
+    # The pool is only used when a call is logged, which models_for never does
+    router = build_router(settings, pool=None, now=datetime.now)  # type: ignore[arg-type]
+    assert router.models_for("answer", ModelId.CLAUDE_3_HAIKU) == [
+        ModelId.CLAUDE_3_HAIKU,
+        "a/b:free",
+    ]
+    assert router.models_for("answer", "gpt-x") == ["a/b:free"]

@@ -14,8 +14,8 @@ from models.model_router import CallBudget, CallContext, ModelRouter, Purpose
 from tests.fakes import FakeProvider, FakeSink
 
 NOW = datetime(2026, 11, 16, 15, 0, tzinfo=UTC)
-MODEL_A = ModelId.GEMMA_4_31B_IT
-MODEL_B = ModelId.NEMOTRON_3_SUPER_120B_A12B
+MODEL_A = ModelId.LING_3_2_FLASH
+MODEL_B = ModelId.NEMOTRON_3_5_SUPER_VL
 MESSAGES = [{"role": "user", "content": "hi"}]
 
 
@@ -58,9 +58,15 @@ def make_router(
     sink: FakeSink | None = None,
     models: Sequence[str] = (MODEL_A, MODEL_B),
     timeouts: Mapping[Purpose, float] | None = None,
+    chat: Sequence[str] = (),
+    chat_choices: frozenset[str] = frozenset(),
 ) -> tuple[ModelRouter, FakeSink]:
     sink = sink or FakeSink()
-    chain: Mapping[Purpose, Sequence[str]] = {"generate": list(models), "answer": []}
+    chain: Mapping[Purpose, Sequence[str]] = {
+        "generate": list(models),
+        "answer": list(chat),
+        "classify": list(chat),
+    }
     router = ModelRouter(
         llm=provider,
         models=chain,
@@ -68,6 +74,7 @@ def make_router(
         reset_hour_utc=0,
         now=lambda: NOW,
         timeouts=timeouts,
+        chat_choices=chat_choices,
     )
     return router, sink
 
@@ -76,6 +83,51 @@ def test_models_for_drops_ids_the_provider_does_not_accept():
     router, _ = make_router(FakeProvider([], known={MODEL_A}), models=(MODEL_A, "made/up:free"))
     assert router.models_for("generate") == [MODEL_A]
     assert router.models_for("answer") == []
+
+
+def chat_router(provider: LLMProvider) -> ModelRouter:
+    router, _ = make_router(
+        provider, chat=(MODEL_A, MODEL_B), chat_choices=frozenset({MODEL_A, MODEL_B})
+    )
+    return router
+
+
+def test_chosen_model_goes_first_for_chat_purposes():
+    assert chat_router(FakeProvider([])).models_for("answer", MODEL_B) == [MODEL_B, MODEL_A]
+
+
+def test_chosen_model_is_not_repeated_in_the_chain():
+    assert chat_router(FakeProvider([])).models_for("answer", MODEL_A) == [MODEL_A, MODEL_B]
+
+
+def test_chosen_model_is_ignored_for_non_chat_purposes():
+    router = chat_router(FakeProvider([]))
+    assert router.models_for("generate", MODEL_B) == [MODEL_A, MODEL_B]
+    assert router.models_for("classify", MODEL_B) == [MODEL_A, MODEL_B]
+
+
+def test_stored_id_outside_catalog_is_not_sent():
+    provider = FakeProvider(["hi"], name="bedrock")
+    router = chat_router(provider)
+    ctx = CallContext(chat_model="old/openrouter:free")
+    assert "".join(router.stream("answer", MESSAGES, "sys", ctx)) == "hi"
+    assert provider.models == [MODEL_A]
+
+
+def test_chosen_model_failure_falls_back_to_the_chain():
+    provider = FakeProvider([limited(), "from a"])
+    response = chat_router(provider).invoke(
+        "answer", MESSAGES, "sys", CallContext(chat_model=MODEL_B)
+    )
+    assert response.answer == "from a"
+    assert provider.models == [MODEL_B, MODEL_A]
+
+
+def test_chosen_model_out_of_quota_stops_the_chain():
+    provider = FakeProvider([capped(), "unused"])
+    with pytest.raises(QuotaExhausted):
+        chat_router(provider).invoke("answer", MESSAGES, "sys", CallContext(chat_model=MODEL_B))
+    assert provider.models == [MODEL_B]
 
 
 def test_invoke_falls_back_to_next_model_on_rate_limit():
@@ -277,7 +329,7 @@ def make_embed_router(
 
 
 EMBED_A = ModelId.NEMOTRON_3_EMBED_1B
-EMBED_B = ModelId.LFM_2_5_EMBEDDING_350M
+EMBED_B = ModelId.NEMOTRON_3_5_EMBED_1B
 
 
 def test_embed_falls_back_logs_and_passes_the_embed_timeout():

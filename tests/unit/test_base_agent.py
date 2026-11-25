@@ -9,7 +9,7 @@ from core.constants import ModelId
 from models.model_router import CallContext, ModelRouter
 from tests.fakes import FakeProvider, FakeSink
 
-MODEL = ModelId.GEMMA_4_31B_IT
+MODEL = ModelId.LING_3_2_FLASH
 
 
 class Reply(BaseModel):

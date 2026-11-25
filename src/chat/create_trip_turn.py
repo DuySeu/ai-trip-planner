@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 # Running out of AI quota ends the turn with an error; any other model failure still gives a form.
 def run_create_trip_turn(turn: ChatTurn, deps: ChatDeps) -> Iterator[ChatEvent]:
     call_ctx = CallContext(
-        trip_id=turn.trip_id, conversation_id=turn.conversation_id, message_id=turn.message.id
+        trip_id=turn.trip_id,
+        conversation_id=turn.conversation_id,
+        message_id=turn.message.id,
+        chat_model=turn.chat_model,
     )
     message = turn.message.content
     with deps.pool.connection() as conn:

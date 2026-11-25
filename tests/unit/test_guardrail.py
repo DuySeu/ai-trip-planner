@@ -15,7 +15,7 @@ from models.llm_factory import ProviderCallError
 from models.model_router import CallContext, ModelRouter
 from tests.fakes import FakeProvider, FakeSink
 
-JUDGE = ModelId.GEMMA_4_31B_IT
+JUDGE = ModelId.LING_3_2_FLASH
 EMBED = ModelId.NEMOTRON_3_EMBED_1B
 CTX = CallContext()
 DENY_BOMBS = {

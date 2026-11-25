@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import StreamingResponse
 
-from api.deps import Conn, Deps, limit_chat, require_quota
+from api.deps import AppDeps, Conn, Deps, limit_chat, require_quota
 from api.envelope import ApiResponse, PageMeta
 from api.schemas.chat import (
     AnswerQuestionBody,
@@ -18,8 +18,8 @@ from api.schemas.chat import (
     ConversationOut,
     CreateConversationBody,
     MessageOut,
-    RenameBody,
     SendMessageBody,
+    UpdateConversationBody,
     conversation_out,
     message_out,
 )
@@ -27,7 +27,8 @@ from chat.chat_service import ChatDeps, ChatTurn, FollowUp, prepare_message, str
 from chat.events import to_sse
 from chat.guard_turn import GUARDRAIL_CONFIG
 from chat.questionnaire_service import answer_questionnaire
-from core.exceptions import Conflict, LimitExceeded, NotFound
+from core.chat_models import chat_models_for
+from core.exceptions import Conflict, InvalidInput, LimitExceeded, NotFound
 from db.repositories import conversations, messages, users
 from domain.trip_request import today_in_vietnam
 from research.cache import DbCache
@@ -67,11 +68,15 @@ def sse_stream(turn: ChatTurn, chat_deps: ChatDeps) -> Iterator[str]:
         yield to_sse(event)
 
 
-# POST /conversations - Start a conversation, optionally with the form fields entered so far
+# POST /conversations - Start a conversation, optionally with the form fields entered so far and
+# a chosen chat model
 @router.post("/conversations", status_code=201)
-def create_conversation(body: CreateConversationBody, conn: Conn) -> ApiResponse[ConversationOut]:
+def create_conversation(
+    body: CreateConversationBody, deps: Deps, conn: Conn
+) -> ApiResponse[ConversationOut]:
+    _check_chat_model(body.chat_model, deps)
     users.get_user(conn, body.user_id)
-    row = conversations.create_conversation(conn, body.user_id, body.draft)
+    row = conversations.create_conversation(conn, body.user_id, body.draft, body.chat_model)
     conn.commit()
     return ApiResponse(success=True, data=conversation_out(row))
 
@@ -117,12 +122,18 @@ def get_conversation(
     )
 
 
-# PATCH /conversations/{conversation_id} - Rename; updated_at stays so the list order holds
+# PATCH /conversations/{conversation_id} - Rename and/or set the chat model (null is "Auto");
+# updated_at stays so the list order holds
 @router.patch("/conversations/{conversation_id}")
-def rename_conversation(
-    conversation_id: UUID, body: RenameBody, conn: Conn
+def update_conversation(
+    conversation_id: UUID, body: UpdateConversationBody, deps: Deps, conn: Conn
 ) -> ApiResponse[ConversationOut]:
-    row = conversations.rename_conversation(conn, conversation_id, body.title)
+    _check_chat_model(body.chat_model, deps)
+    row = conversations.get_conversation(conn, conversation_id)
+    if body.title is not None:
+        row = conversations.rename_conversation(conn, conversation_id, body.title)
+    if "chat_model" in body.model_fields_set:
+        row = conversations.set_chat_model(conn, conversation_id, body.chat_model)
     conn.commit()
     return ApiResponse(success=True, data=conversation_out(row))
 
@@ -195,3 +206,9 @@ def send_message(body: SendMessageBody, deps: Deps, chat_deps: ChatDepsDep) -> S
     return StreamingResponse(
         sse_stream(turn, chat_deps), media_type="text/event-stream", headers=SSE_HEADERS
     )
+
+
+# A chosen chat model must be one of the provider's chat models; None ("Auto") always passes
+def _check_chat_model(chat_model: str | None, deps: AppDeps) -> None:
+    if chat_model is not None and chat_model not in chat_models_for(deps.settings.llm_provider):
+        raise InvalidInput(f"chat_model {chat_model!r} is not a chat model of this provider")

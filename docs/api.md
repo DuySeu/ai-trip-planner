@@ -57,10 +57,11 @@ Văn bản tự do (tên, địa điểm, ghi chú, tin nhắn) được chuẩn
 | POST | `/conversations` | Bắt đầu một cuộc hội thoại |
 | GET | `/users/{user_id}/conversations` | Danh sách hội thoại của user, phân trang |
 | GET | `/conversations/{conversation_id}` | Hội thoại kèm một trang tin nhắn |
-| PATCH | `/conversations/{conversation_id}` | Đổi tên hội thoại |
+| PATCH | `/conversations/{conversation_id}` | Đổi tên hội thoại hoặc đổi chat model của hội thoại |
 | PATCH | `/conversations/{conversation_id}/messages/{message_id}` | Hủy một form tạo trip trong chat |
 | DELETE | `/conversations/{conversation_id}` | Xóa hội thoại và tin nhắn |
 | POST | `/chat` | Gửi tin nhắn, nhận câu trả lời dạng SSE |
+| GET | `/models` | Các chat model người dùng được chọn, theo provider đang dùng |
 | GET | `/stats/health` | Sức khỏe hệ thống: lượt gọi LLM so với trần, lỗi, hàng đợi job, provider bị chặn |
 | GET | `/stats/usage` | Số liệu người dùng, trip và chat trong 7, 30 hoặc 90 ngày |
 
@@ -305,6 +306,7 @@ Payload:
 
 - `user_id`: bắt buộc.
 - `draft`: không bắt buộc. Mọi field đều có thể bỏ trống; ràng buộc giống `POST /trips`, thêm `month` (chuỗi) và `length_days` (1 đến 30). Server chỉ giữ các field có giá trị (`RequestDraft`, `src/domain/discovery.py:33`).
+- `chat_model`: không bắt buộc. Một `id` trong `GET /models`; `null` hoặc bỏ trống là "Auto" (chuỗi `CHAT_MODELS`).
 
 Output 201, `data` là `ConversationOut`:
 
@@ -314,12 +316,13 @@ Output 201, `data` là `ConversationOut`:
   "user_id": "uuid",
   "title": null,
   "request_draft": { "origin": "Hà Nội", "travelers": 2 },
+  "chat_model": null,
   "created_at": "2026-11-19T03:00:00Z",
   "updated_at": "2026-11-19T03:00:00Z"
 }
 ```
 
-Lỗi: 404 khi không có user; 422 khi draft sai ràng buộc.
+Lỗi: 404 khi không có user; 422 khi draft sai ràng buộc hoặc `chat_model` không có trong `GET /models`.
 
 ### GET /users/{user_id}/conversations
 
@@ -381,19 +384,21 @@ Lỗi: 404 khi không có hội thoại.
 
 ### PATCH /conversations/{conversation_id}
 
-Đổi tên hội thoại; `updated_at` giữ nguyên để thứ tự danh sách không đổi. Code: `src/api/routes/chat.py:116`.
+Đổi tên hội thoại, đổi chat model của hội thoại, hoặc cả hai; `updated_at` giữ nguyên để thứ tự danh sách không đổi. Code: `src/api/routes/chat.py:127`.
 
 Payload:
 
 ```json
-{ "title": "Đà Lạt tháng 12" }
+{ "title": "Đà Lạt tháng 12", "chat_model": "inclusionai/ling-3.2-flash:free" }
 ```
 
-- `title`: bắt buộc, 1 đến 80 ký tự.
+- Phải có ít nhất một field.
+- `title`: 1 đến 80 ký tự, không được là `null`.
+- `chat_model`: một `id` trong `GET /models`, hoặc `null` để về "Auto". Các lượt chat sau của hội thoại (`answer`, `discover`, `suggest`) thử model này trước rồi mới đến `CHAT_MODELS`; router và việc sửa plan vẫn dùng `CLASSIFIER_MODELS` và `PLANNER_MODELS`.
 
 Output 200: `data` là `ConversationOut`.
 
-Lỗi: 404 khi không có hội thoại; 422 khi title rỗng hoặc quá dài.
+Lỗi: 404 khi không có hội thoại; 422 khi body rỗng, title rỗng hoặc quá dài, hoặc `chat_model` không có trong `GET /models`.
 
 ### PATCH /conversations/{conversation_id}/messages/{message_id}
 
@@ -484,6 +489,27 @@ data: <json>
 | `done` | `{}` | Kết thúc câu trả lời |
 
 Nếu client ngắt kết nối giữa chừng, phần câu trả lời đã gửi vẫn được lưu vào hội thoại.
+
+## Models
+
+### GET /models
+
+Các chat model của provider đang dùng (`LLM_PROVIDER`), cho ô chọn model ở thanh chat. Danh sách lấy từ `src/core/constants.py` (khối OpenRouter do `scripts/sync_models.sh` sinh), nên đổi provider là danh sách đổi theo. Code: `src/api/routes/models.py:16`.
+
+- Payload: không có.
+
+Output 200:
+
+```json
+{
+  "provider": "openrouter",
+  "default_model": "inclusionai/ling-3.2-flash:free",
+  "models": [{ "id": "inclusionai/ling-3.2-flash:free", "label": "inclusionAI: Ling 3.2 Flash (free)" }]
+}
+```
+
+- `default_model`: model mà "Auto" dùng: id đầu tiên của `CHAT_MODELS` có trong `models`, không có thì model đầu tiên của `models`, danh sách rỗng thì `null`.
+- `models`: rỗng với provider chưa có danh sách (openai).
 
 ## Stats
 

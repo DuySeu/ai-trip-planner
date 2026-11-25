@@ -40,6 +40,8 @@ STEPS: Mapping[Purpose, str] = {
     "repair": "fix invalid JSON",
     "embed": "embed text for similarity",
 }
+# The purposes fed by CHAT_MODELS, where a conversation's chosen model goes first
+CHAT_PURPOSES: frozenset[Purpose] = frozenset({"answer", "discover", "suggest"})
 
 
 # The LLM calls one job attempt may still make; the only mutable object here
@@ -62,6 +64,8 @@ class CallContext:
     conversation_id: UUID | None = None
     message_id: UUID | None = None
     budget: CallBudget | None = None
+    # The conversation's chosen chat model; None uses the CHAT_MODELS chain as configured
+    chat_model: str | None = None
 
 
 # Where call records and quota blocks are kept
@@ -85,6 +89,7 @@ class ModelRouter:
         reset_hour_utc: int,
         now: Callable[[], datetime],
         timeouts: Mapping[Purpose, float] | None = None,
+        chat_choices: AbstractSet[str] = frozenset(),
     ) -> None:
         self._llm = llm
         self._models = models
@@ -92,15 +97,21 @@ class ModelRouter:
         self._reset_hour_utc = reset_hour_utc
         self._now = now
         self._timeouts = timeouts or {}
+        # The ids a visitor may pick; a stored id outside it (old provider, dropped) is ignored
+        self._chat_choices = chat_choices
 
     # The quota service of the provider in use
     @property
     def service(self) -> str:
         return self._llm.name
 
-    # The configured model ids for a purpose, in order, without ids the provider does not accept
-    def models_for(self, purpose: Purpose) -> list[str]:
-        return [m for m in self._models.get(purpose, ()) if self._llm.accepts(m)]
+    # The configured model ids for a purpose, in order, without ids the provider does not accept;
+    # for a chat purpose a chosen id from chat_choices goes first
+    def models_for(self, purpose: Purpose, chosen: str | None = None) -> list[str]:
+        chain = list(self._models.get(purpose, ()))
+        if purpose in CHAT_PURPOSES and chosen is not None and chosen in self._chat_choices:
+            chain = [chosen, *(m for m in chain if m != chosen)]
+        return [m for m in chain if self._llm.accepts(m)]
 
     # One call to one model: checks the block, takes the budget, logs, maps errors. timeout_purpose
     # picks the timeout when it differs from the logged purpose (a repair keeps its flow's timeout)
@@ -147,7 +158,7 @@ class ModelRouter:
         ctx: CallContext,
         response_format: Mapping[str, Any] | None = None,
     ) -> tuple[LLMResponse, str]:
-        for model_id in self.models_for(purpose):
+        for model_id in self.models_for(purpose, ctx.chat_model):
             try:
                 response = self.invoke_model(
                     model_id, purpose, messages, system_prompt, ctx, response_format
@@ -220,7 +231,7 @@ class ModelRouter:
         system_prompt: str,
         ctx: CallContext,
     ) -> Iterator[str]:
-        for model_id in self.models_for(purpose):
+        for model_id in self.models_for(purpose, ctx.chat_model):
             self._begin(ctx)
             started = time.monotonic()
             sent = False
@@ -370,7 +381,7 @@ def call_json[T: BaseModel](
         },
     }
     last_errors: list[str] = []
-    for model_id in router.models_for(purpose):
+    for model_id in router.models_for(purpose, ctx.chat_model):
         attempt_purpose: Purpose = purpose
         attempt_messages = list(messages)
         for _ in range(2):

@@ -3,13 +3,16 @@ import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 import { apiUrl } from "../api/client.ts";
 import type { Message } from "../api/api.types.ts";
-import { DOMESTIC_TRIP_ID, HOTEL_CARDS, SEED_CONVERSATION_ID } from "../mocks/fixtures.ts";
+import { DOMESTIC_TRIP_ID, HOTEL_CARDS, LIGHTNING_MODEL, SEED_CONVERSATION_ID } from "../mocks/fixtures.ts";
 import { mockDb } from "../mocks/mockDb.ts";
 import { server } from "../mocks/server.ts";
 import { addDays, todayInVietnam } from "../format/dates.ts";
 import { renderApp } from "../test/renderApp.tsx";
 
 const composer = () => screen.getByRole("textbox", { name: "Message" });
+const LIGHTNING = LIGHTNING_MODEL;
+// The seeded conversation, as the mock server keeps it
+const seeded = () => mockDb.conversations.find((c) => c.id === SEED_CONVERSATION_ID) ?? expect.unreachable("no seeded conversation");
 
 // Ask the chat to plan a trip and wait for the form it answers with
 async function askToPlan(user: ReturnType<typeof renderApp>["user"]) {
@@ -408,5 +411,84 @@ describe("ChatPanel", () => {
     const train = within(slider.getByRole("heading", { name: "Vietnam Railways" }).closest("article") as HTMLElement);
     expect(train.getByText("No price shown")).toBeInTheDocument();
     expect(mockDb.messages.at(-1)).toMatchObject({ intent: "booking_search", metadata: { kind: "flight", status: "results" } });
+  });
+
+  it("shows_the_stored_model_label_on_the_picker", async () => {
+    seeded().chat_model = LIGHTNING.id;
+    renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    expect(await screen.findByRole("button", { name: `Model: ${LIGHTNING.label}` })).toBeInTheDocument();
+  });
+
+  it("shows_auto_for_null_or_unknown_model", async () => {
+    seeded().chat_model = "gone/model:free";
+    renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    expect(await screen.findByRole("button", { name: "Model: Auto" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("picking_a_model_patches_the_conversation", async () => {
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    await user.click(await screen.findByRole("button", { name: "Model: Auto" }));
+    await user.click(screen.getByRole("menuitemradio", { name: LIGHTNING.label }));
+    await waitFor(() => expect(seeded().chat_model).toBe(LIGHTNING.id));
+    expect(await screen.findByRole("button", { name: `Model: ${LIGHTNING.label}` })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: `Model: ${LIGHTNING.label}` }));
+    expect(screen.getByRole("menuitemradio", { name: LIGHTNING.label })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("menuitemradio", { name: "Auto" }));
+    await waitFor(() => expect(seeded().chat_model).toBeNull());
+  });
+
+  it("a_refused_pick_shows_an_error_and_reloads_the_model_list", async () => {
+    server.use(http.patch(apiUrl("/conversations/:conversationId"), () => HttpResponse.json(
+      { success: false, data: null, error: { code: "invalid_request", message: "Unknown chat model" }, meta: null },
+      { status: 422 },
+    )));
+    let modelLoads = 0;
+    server.events.on("request:start", ({ request }) => {
+      if (request.method === "GET" && new URL(request.url).pathname.endsWith("/models")) modelLoads += 1;
+    });
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    await user.click(await screen.findByRole("button", { name: "Model: Auto" }));
+    await user.click(screen.getByRole("menuitemradio", { name: LIGHTNING.label }));
+    expect(await screen.findByText("Could not change the model, try again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Model: Auto" })).toBeInTheDocument();
+    await waitFor(() => expect(modelLoads).toBe(2));
+    server.events.removeAllListeners();
+  });
+
+  it("model_menu_works_from_the_keyboard", async () => {
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    const picker = await screen.findByRole("button", { name: "Model: Auto" });
+    picker.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("menuitemradio", { name: "Auto" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitemradio", { name: "Google: Gemma 4 31B (free)" })).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(screen.getByRole("menuitemradio", { name: LIGHTNING.label })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitemradio", { name: "Auto" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(picker).toHaveFocus();
+  });
+
+  it("a_pick_before_the_first_message_goes_on_create", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.click(await screen.findByRole("button", { name: "Model: Auto" }));
+    await user.click(screen.getByRole("menuitemradio", { name: LIGHTNING.label }));
+    await user.type(composer(), "Any tips for packing?{Enter}");
+    await waitFor(() => expect(mockDb.conversations.at(-1)?.chat_model).toBe(LIGHTNING.id));
+  });
+
+  it("picker_stays_disabled_when_the_list_is_empty", async () => {
+    server.use(http.get(apiUrl("/models"), () => HttpResponse.json({ success: true, data: { provider: "openai", default_model: null, models: [] } })));
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    const picker = await screen.findByRole("button", { name: "Model: Auto (coming soon)" });
+    expect(picker).toHaveAttribute("aria-disabled", "true");
+    expect(picker).toHaveAttribute("title", "Coming soon");
+    await user.click(picker);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });

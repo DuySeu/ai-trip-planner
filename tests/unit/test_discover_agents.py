@@ -16,7 +16,7 @@ from domain.discovery import (
 from models.model_router import CallContext, ModelRouter
 from tests.fakes import FakeProvider, FakeSink
 
-MODEL = ModelId.GEMMA_4_31B_IT
+MODEL = ModelId.LING_3_2_FLASH
 TODAY = date(2026, 11, 17)
 DRAFT = {"origin": "Hanoi", "travelers": 2}
 CONVERSATION = "<conversation>\nuser: hi\nassistant: hello\n</conversation>"

@@ -136,6 +136,8 @@ class ChatTurn:
     trip_id: UUID | None
     plan_revision: int | None
     follow_up: FollowUp | None = None
+    # The conversation's chosen chat model, tried first by the chat purposes
+    chat_model: str | None = None
 
 
 # The assistant reply as it builds up: its intent, its metadata and the text streamed so far
@@ -182,7 +184,13 @@ def prepare_message(
     # Commit now: the call log of the stream refers to this message from other connections
     conn.commit()
     return ChatTurn(
-        conversation_id, conversation.user_id, message, trip_id, plan_revision, follow_up
+        conversation_id,
+        conversation.user_id,
+        message,
+        trip_id,
+        plan_revision,
+        follow_up,
+        conversation.chat_model,
     )
 
 
@@ -241,7 +249,10 @@ def stream_reply(turn: ChatTurn, deps: ChatDeps) -> Iterator[ChatEvent]:
 # Classify the message and run the handler of its intent
 def _dispatch(turn: ChatTurn, deps: ChatDeps, reply: _Reply) -> Iterator[ChatEvent]:
     call_ctx = CallContext(
-        trip_id=turn.trip_id, conversation_id=turn.conversation_id, message_id=turn.message.id
+        trip_id=turn.trip_id,
+        conversation_id=turn.conversation_id,
+        message_id=turn.message.id,
+        chat_model=turn.chat_model,
     )
     with deps.pool.connection() as conn:
         data = load_context(conn, turn)

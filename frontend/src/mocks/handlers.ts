@@ -19,7 +19,7 @@ import { apiUrl } from "../api/client.ts";
 import { addDays, todayInVietnam, tripDays } from "../format/dates.ts";
 import { COUNTRY_CURRENCY } from "../format/money.ts";
 import { type ScriptFollowUp, scriptReply } from "./chatScript.ts";
-import { HEALTH_STATS, PLACES, usageStats } from "./fixtures.ts";
+import { HEALTH_STATS, MODELS, PLACES, usageStats } from "./fixtures.ts";
 import { type MockMessage, type MockTrip, mockDb, REPLAN_HEAD_START_MS } from "./mockDb.ts";
 
 const MAX_NAME = 50;
@@ -87,7 +87,9 @@ export const handlers = [
 
   // POST /conversations - Start a conversation, optionally with the form's draft
   http.post(apiUrl("/conversations"), async ({ request }) => {
-    const body = (await request.json()) as { user_id?: string; draft?: RequestDraft | null };
+    const body = (await request.json()) as { user_id?: string; draft?: RequestDraft | null; chat_model?: string | null };
+    const chatModel = body.chat_model ?? null;
+    if (!isChatModel(chatModel)) return fail(422, "invalid_request", "Unknown chat model");
     const user = mockDb.users.find((u) => u.id === body.user_id);
     if (!user) return notFound();
     const iso = mockDb.now().toISOString();
@@ -96,6 +98,7 @@ export const handlers = [
       user_id: user.id,
       title: null,
       request_draft: body.draft ?? null,
+      chat_model: chatModel,
       created_at: iso,
       updated_at: iso,
     };
@@ -113,16 +116,28 @@ export const handlers = [
     return ok({ ...conversation, messages });
   }),
 
-  // PATCH /conversations/:conversationId - Rename; updated_at stays, so the list order does not change
+  // PATCH /conversations/:conversationId - Rename and/or pick the chat model; updated_at stays, so the list order
+  // does not change
   http.patch(apiUrl("/conversations/:conversationId"), async ({ params, request }) => {
     const conversation = mockDb.conversations.find((c) => c.id === params.conversationId);
     if (!conversation) return notFound();
-    const body = (await request.json()) as { title?: unknown };
+    const body = (await request.json()) as { title?: unknown; chat_model?: unknown };
+    const hasTitle = "title" in body;
+    const hasModel = "chat_model" in body;
+    if (!hasTitle && !hasModel) return fail(422, "invalid_request", "Send title or chat_model");
     const title = typeof body.title === "string" ? body.title.normalize("NFC").trim() : "";
-    if (title.length < 1 || title.length > MAX_TITLE) return fail(422, "invalid_request", "Title must be 1 to 80 characters");
-    conversation.title = title;
+    if (hasTitle && (title.length < 1 || title.length > MAX_TITLE)) {
+      return fail(422, "invalid_request", "Title must be 1 to 80 characters");
+    }
+    const chatModel = typeof body.chat_model === "string" ? body.chat_model : null;
+    if (hasModel && !isChatModel(chatModel)) return fail(422, "invalid_request", "Unknown chat model");
+    if (hasTitle) conversation.title = title;
+    if (hasModel) conversation.chat_model = chatModel;
     return ok(conversation);
   }),
+
+  // GET /models - The chat models of the provider in use
+  http.get(apiUrl("/models"), () => ok(MODELS)),
 
   // PATCH /conversations/:conversationId/messages/:messageId - Cancel an open trip form, or answer a questionnaire step
   http.patch(apiUrl("/conversations/:conversationId/messages/:messageId"), async ({ params, request }) => {
@@ -348,6 +363,11 @@ function fail(status: number, code: string, message: string, blockedUntil?: stri
 // 404 envelope
 function notFound() {
   return fail(404, "not_found", "Not found");
+}
+
+// Null ("Auto") or one of the mocked provider's models
+function isChatModel(chatModel: string | null) {
+  return chatModel === null || MODELS.models.some((m) => m.id === chatModel);
 }
 
 // One page of a list, with meta

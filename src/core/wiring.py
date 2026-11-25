@@ -7,6 +7,7 @@ from datetime import datetime
 
 from psycopg_pool import ConnectionPool
 
+from core.chat_models import chat_models_for
 from core.config import config
 from core.settings import Settings
 from db.call_sink import DbCallSink
@@ -62,4 +63,5 @@ def build_router(
         reset_hour_utc=settings.quota_reset_hour_utc,
         now=now,
         timeouts=timeouts,
+        chat_choices=frozenset(chat_models_for(settings.llm_provider)),
     )

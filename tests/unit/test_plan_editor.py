@@ -14,7 +14,7 @@ from planning.plan_editor import compact_plan, propose_edit
 from tests.fakes import FakeProvider, FakeSink
 from tests.fixtures.builders import bangkok_plan, dalat_plan, dalat_request
 
-MODEL = ModelId.GEMMA_4_31B_IT
+MODEL = ModelId.LING_3_2_FLASH
 PLAN = dalat_plan()
 REQ = dalat_request()
 CTX = CallContext()

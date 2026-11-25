@@ -119,6 +119,14 @@ def test_trips_have_no_group_transport_or_conversation_column(db_conn):
     assert not columns & {"group_type", "transport_modes", "conversation_id"}
 
 
+def test_conversation_chat_model_is_at_most_200_chars(db_conn):
+    user_id = insert_user(db_conn, "Duy")
+    insert = "INSERT INTO conversations (user_id, chat_model) VALUES (%s, %s)"
+    db_conn.execute(insert, (user_id, "x" * 200))
+    with pytest.raises(psycopg.errors.CheckViolation):
+        db_conn.execute(insert, (user_id, "x" * 201))
+
+
 def test_only_one_active_job_per_trip(db_conn):
     trip = insert_trip(db_conn, insert_user(db_conn, "a"))
     db_conn.execute(

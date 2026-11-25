@@ -11,8 +11,8 @@ from models.model_router import CallContext, ModelRouter
 from orchestration.routing_schema import AgentSpec
 from tests.fakes import FakeProvider, FakeSink
 
-MODEL_A = ModelId.GEMMA_4_31B_IT
-MODEL_B = ModelId.NEMOTRON_3_SUPER_120B_A12B
+MODEL_A = ModelId.LING_3_2_FLASH
+MODEL_B = ModelId.NEMOTRON_3_5_SUPER_VL
 CATALOG = [AgentSpec(name="advice", description="travel advice")]
 MESSAGES = [{"role": "user", "content": "hi"}]
 

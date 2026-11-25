@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.deps import AppDeps, build_limiters, limit_api
 from api.errors import register_error_handlers
 from api.middleware import REQUEST_ID_HEADER, BodyLimitMiddleware, RequestIdMiddleware
-from api.routes import chat, exports, health, places, stats, trips, users
+from api.routes import chat, exports, health, models, places, stats, trips, users
 from core.config import config
 from core.logger import setup_logging
 from core.settings import Settings, load_settings
@@ -39,6 +39,7 @@ API_ROUTERS: tuple[APIRouter, ...] = (
     exports.router,
     chat.router,
     stats.router,
+    models.router,
 )
 
 

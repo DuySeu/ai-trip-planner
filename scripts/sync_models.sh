@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sync free OpenRouter chat, embedding and rerank models into ModelId in core/constants.py
 #
-# Chat:       https://openrouter.ai/models?max_price=0&output_modalities=text&input_modalities=text&supported_parameters=tools&max_output_price=0
+# Chat:       https://openrouter.ai/models?max_price=0&output_modalities=text&input_modalities=text&supported_parameters=tools,structured_outputs&max_output_price=0
 # Embeddings: https://openrouter.ai/models?max_price=0&output_modalities=embeddings&input_modalities=text&max_output_price=0
 # Rerank:     https://openrouter.ai/models?max_price=0&output_modalities=rerank&input_modalities=text&max_output_price=0
 # All three require prompt and completion price "0". Rerank also requires a ":free" id, since paid rerank models report "0" too (billed per search).
@@ -38,7 +38,7 @@ def is_free_chat(model: dict) -> bool:
         is_zero_priced(model)
         and "text" in architecture.get("input_modalities", [])
         and "text" in architecture.get("output_modalities", [])
-        and "tools" in (model.get("supported_parameters") or [])
+        and {"tools", "structured_outputs"} <= set(model.get("supported_parameters") or [])
     )
 
 
@@ -71,6 +71,7 @@ def constant_name(model_id: str) -> str:
     return f"_{name}" if name[0].isdigit() else name
 
 
+# The comment after each id is the model's name; core/chat_models.py reads it as the chat picker label
 def render_block(tag: str, models: list[dict]) -> str:
     lines = [f"    # {tag}:BEGIN - {GENERATED_BY}"]
     seen: set[str] = set()

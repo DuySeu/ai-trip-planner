@@ -3,6 +3,7 @@ import {
   ArrowUp,
   ArrowUpRight,
   BedDouble,
+  Check,
   ChevronDown,
   CloudSun,
   type LucideIcon,
@@ -21,7 +22,8 @@ import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useRef
 import { useNavigate } from "react-router";
 import type { Message, Place, RequestDraft, SuggestionCard as Card } from "../api/api.types.ts";
 import { apiRequest } from "../api/client.ts";
-import { createConversation, useConversation } from "../api/conversations.ts";
+import { createConversation, useConversation, useSetChatModel } from "../api/conversations.ts";
+import { useModels } from "../api/models.ts";
 import { useChatStream } from "../chat/useChatStream.ts";
 import { formatDay } from "../format/dates.ts";
 import { codeKey, errorKey } from "../i18n/errorKey.ts";
@@ -79,15 +81,26 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
   const [text, setText] = useState("");
   const [isMultiline, setIsMultiline] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  // A model picked before the conversation exists; it goes on the create call
+  const [pendingModel, setPendingModel] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
   const conversation = useConversation(conversationId);
+  const setChatModel = useSetChatModel();
+  // The pick stays shown while a just-created conversation loads
+  const chatModel = conversation.data ? conversation.data.chat_model : pendingModel;
 
   // Create the conversation on the first send when there is none yet
   const ensureConversation = async () => {
-    const created = await createConversation({ user_id: session?.userId ?? "", draft: null });
+    const created = await createConversation({ user_id: session?.userId ?? "", draft: null, chat_model: pendingModel });
     onConversationCreated(created.id);
     return created.id;
+  };
+
+  // Keep the pick until the first send creates the conversation, or save it on the conversation
+  const handlePickModel = (model: string | null) => {
+    if (conversationId === null) setPendingModel(model);
+    else setChatModel.mutate({ conversationId, chatModel: model });
   };
   const chat = useChatStream(conversationId, {
     tripId: trip?.id ?? null,
@@ -421,18 +434,7 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
                   )}
                 </button>
               )}
-              <div className="hidden [grid-area:model] @md:block">
-                <button
-                  type="button"
-                  className={`${BUTTON.ghost} text-sm ${SOON}`}
-                  aria-label={t("chat.model", { model: t("chat.modelAuto") })}
-                  aria-disabled="true"
-                  title={t("chat.comingSoon")}
-                >
-                  {t("chat.modelAuto")}
-                  <ChevronDown size={16} strokeWidth={1.75} aria-hidden="true" />
-                </button>
-              </div>
+              <ModelPicker value={chatModel} onPick={handlePickModel} />
               <button
                 type="button"
                 className={`${BUTTON.icon} [grid-area:mic] ${SOON}`}
@@ -450,6 +452,11 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
         </div>
         <div className={`pointer-events-auto flex flex-col gap-1 px-4 pt-2 pb-3 text-center ${trip === null ? "bg-background" : "bg-card"}`}>
           {disabledReason !== null && <p className="text-sm text-muted-foreground">{t(disabledReason)}</p>}
+          {setChatModel.isError && (
+            <p className="text-sm text-destructive" role="alert">
+              {t("chat.modelSaveFailed")}
+            </p>
+          )}
           {isTooLong && (
             <p id="chat-too-long" className="text-sm text-destructive">
               {t("chat.tooLong", { count: trimmed.length })}
@@ -458,6 +465,131 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
           <p className="text-xs text-muted-foreground">{t("chat.disclaimer")}</p>
         </div>
       </form>
+    </div>
+  );
+}
+
+interface ModelPickerProps {
+  value: string | null;
+  onPick(model: string | null): void;
+}
+
+// The composer's model picker: "Auto" (null) or one of GET /models, in a menu that opens upward. With no models
+// (a provider without a list, or still loading) it stays the "Coming soon" button
+function ModelPicker({ value, onPick }: ModelPickerProps) {
+  const t = useT();
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const models = useModels().data?.models ?? [];
+  const current = models.find((m) => m.id === value) ?? null;
+  const label = current?.label ?? t("chat.modelAuto");
+  const options = [{ id: null, label: t("chat.modelAuto") }, ...models];
+
+  // Close the menu and give focus back to the button
+  const closeToTrigger = () => {
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  // Arrow keys move through the items and wrap; Home and End jump to the first and last
+  const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])];
+    const index = items.findIndex((item) => item === document.activeElement);
+    const next = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: items.length - 1 }[event.key];
+    if (next === undefined || items.length === 0) return;
+    event.preventDefault();
+    items[(next + items.length) % items.length]?.focus();
+  };
+
+  // Focus the checked item when the menu opens
+  useEffect(() => {
+    if (isOpen) menuRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+  }, [isOpen]);
+
+  // Close the menu on a press outside the picker, or on Escape with focus back on the button
+  useEffect(() => {
+    if (!isOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") closeToTrigger();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  if (models.length === 0) {
+    return (
+      <div className="hidden [grid-area:model] @md:block">
+        <button
+          type="button"
+          className={`${BUTTON.ghost} text-sm ${SOON}`}
+          aria-label={t("chat.model", { model: t("chat.modelAuto") })}
+          aria-disabled="true"
+          title={t("chat.comingSoon")}
+        >
+          {t("chat.modelAuto")}
+          <ChevronDown size={16} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="relative hidden [grid-area:model] @md:block">
+      <button
+        type="button"
+        className={`${BUTTON.ghost} max-w-48 text-sm`}
+        aria-label={t("chat.modelPick", { model: label })}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        title={label}
+        ref={triggerRef}
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDown size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
+      </button>
+      {isOpen && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={t("chat.modelMenu")}
+          onKeyDown={handleMenuKeyDown}
+          className="absolute right-0 bottom-full z-20 mb-1 flex max-h-72 w-max max-w-72 origin-bottom-right animate-pop-in flex-col overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-raised"
+        >
+          {options.map((option) => (
+            <button
+              key={option.id ?? "auto"}
+              type="button"
+              role="menuitemradio"
+              aria-checked={option.id === (current?.id ?? null)}
+              tabIndex={-1}
+              className="flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-left text-sm font-medium hover:bg-accent"
+              title={option.label}
+              onClick={() => {
+                closeToTrigger();
+                onPick(option.id);
+              }}
+            >
+              <Check
+                size={16}
+                strokeWidth={1.75}
+                aria-hidden="true"
+                className={`shrink-0 ${option.id === (current?.id ?? null) ? "" : "invisible"}`}
+              />
+              <span className="truncate">{option.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -13,6 +13,7 @@ from psycopg_pool import ConnectionPool
 
 from api.routes.chat import get_chat_deps, sse_stream
 from chat.chat_service import prepare_message
+from core.constants import ModelId
 from core.settings import load_settings
 from db.pool import open_pool
 from db.repositories import conversations, messages, quota, trips, users
@@ -327,6 +328,52 @@ def test_create_conversation_keeps_only_the_filled_draft_fields(db_pool, db_conn
     assert bad.status_code == 422
     missing = client.post("/conversations", json={"user_id": str(uuid4())})
     assert missing.status_code == 404
+
+
+CHOSEN = ModelId.PARTICLE_1
+
+
+def test_patch_sets_and_resets_chat_model_and_keeps_title(db_pool, db_conn, conversation):
+    client, _ = chat_client(db_pool, [])
+    conversations.rename_conversation(db_conn, conversation.id, "Sapa")
+    url = f"/conversations/{conversation.id}"
+
+    chosen = client.patch(url, json={"chat_model": CHOSEN}).json()["data"]
+    assert (chosen["chat_model"], chosen["title"]) == (CHOSEN, "Sapa")
+    assert client.get(url).json()["data"]["chat_model"] == CHOSEN
+
+    reset = client.patch(url, json={"chat_model": None}).json()["data"]
+    assert (reset["chat_model"], reset["title"]) == (None, "Sapa")
+
+
+def test_rename_keeps_chat_model(db_pool, db_conn, conversation):
+    client, _ = chat_client(db_pool, [])
+    conversations.set_chat_model(db_conn, conversation.id, CHOSEN)
+    data = client.patch(f"/conversations/{conversation.id}", json={"title": "Hue"}).json()["data"]
+    assert (data["title"], data["chat_model"]) == ("Hue", CHOSEN)
+
+
+def test_patch_with_unknown_model_is_422(db_pool, conversation):
+    client, _ = chat_client(db_pool, [])
+    response = client.patch(f"/conversations/{conversation.id}", json={"chat_model": "gpt-x"})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
+def test_patch_with_empty_body_is_422(db_pool, conversation):
+    client, _ = chat_client(db_pool, [])
+    assert client.patch(f"/conversations/{conversation.id}", json={}).status_code == 422
+
+
+def test_create_conversation_with_chat_model(db_pool, db_conn):
+    client, _ = chat_client(db_pool, [])
+    user = users.claim_user(db_conn, "Duy")
+    body = {"user_id": str(user.id), "draft": None}
+    created = client.post("/conversations", json={**body, "chat_model": CHOSEN})
+    assert created.status_code == 201
+    assert created.json()["data"]["chat_model"] == CHOSEN
+    unknown = client.post("/conversations", json={**body, "chat_model": "gpt-x"})
+    assert unknown.status_code == 422
 
 
 def test_list_conversations_newest_first_with_paging(db_pool, db_conn):

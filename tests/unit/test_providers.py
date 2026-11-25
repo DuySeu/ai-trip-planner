@@ -19,6 +19,7 @@ from botocore.exceptions import (
 )
 from openrouter import errors
 
+from core.chat_models import chat_models_for
 from core.constants import ModelId
 from models.llm_factory import ProviderCallError
 from models.provider import (
@@ -26,11 +27,12 @@ from models.provider import (
     OpenAIProvider,
     OpenRouterProvider,
     alternate_turns,
+    model_ids,
     role_credentials,
 )
 
-MODEL_A = ModelId.GEMMA_4_31B_IT
-MODEL_B = ModelId.NEMOTRON_3_SUPER_120B_A12B
+MODEL_A = ModelId.LING_3_2_FLASH
+MODEL_B = ModelId.NEMOTRON_3_5_SUPER_VL
 MESSAGES = [{"role": "user", "content": "hi"}]
 PATTERN = "free-models-per-day"
 
@@ -149,6 +151,20 @@ def test_openrouter_accepts_only_known_model_ids():
     provider = OpenRouterProvider("key", PATTERN)
     assert provider.accepts(MODEL_A)
     assert not provider.accepts("made/up:free")
+
+
+def test_model_ids_keep_constants_whose_slug_starts_with_a_digit():
+    # sync_models.sh names "x/4o-mini:free" _4O_MINI; only Python's own dunder names are skipped
+    class Ids:
+        _4O_MINI = "x/4o-mini:free"
+        GEMMA = "google/gemma:free"
+
+    assert model_ids(Ids) == frozenset({"x/4o-mini:free", "google/gemma:free"})
+
+
+def test_openrouter_accepts_every_pickable_chat_model():
+    provider = OpenRouterProvider("key", PATTERN)
+    assert all(provider.accepts(model_id) for model_id in chat_models_for("openrouter"))
 
 
 def test_openrouter_json_request_requires_support_and_heals_the_reply():

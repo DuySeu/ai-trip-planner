@@ -309,11 +309,25 @@ export interface Conversation {
   user_id: string;
   title: string | null;
   request_draft: RequestDraft | null;
+  // The picked chat model; null is "Auto" (CHAT_MODELS on the server)
+  chat_model: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export type ConversationDetail = Conversation & { messages: Message[] };
+
+// GET /models: the chat models of the provider in use and the one "Auto" stands for
+export interface ModelOption {
+  id: string;
+  label: string;
+}
+
+export interface ModelsInfo {
+  provider: string;
+  default_model: string | null;
+  models: ModelOption[];
+}
 
 export type ChatEvent =
   | { type: "token"; data: { text: string } }

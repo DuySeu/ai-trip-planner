@@ -32,7 +32,7 @@ from service.tavily.search import SearchHit
 from tests.fakes import FakeProvider, FakeSearch, FakeSink
 from tests.fixtures.builders import DALAT_FIELDS, dalat_plan
 
-MODEL = ModelId.GEMMA_4_31B_IT
+MODEL = ModelId.LING_3_2_FLASH
 NOW = datetime(2026, 11, 17, 10, 0, tzinfo=UTC)
 ENV = {
     "DB_USER": "u",
@@ -88,6 +88,7 @@ class Rig:
         provider: FakeProvider | None = None,
         sink: DbCallSink | FakeSink | None = None,
         guardrail: Mapping[str, Any] | None = None,
+        chat_choices: frozenset[str] = frozenset(),
     ) -> None:
         self.provider = provider or FakeProvider(script)
         self.sink = sink or FakeSink()
@@ -99,6 +100,7 @@ class Rig:
             sink=self.sink,
             reset_hour_utc=0,
             now=lambda: NOW,
+            chat_choices=chat_choices,
         )
         self.deps = ChatDeps(
             pool,
@@ -174,6 +176,15 @@ def test_question_streams_answer_and_saves_both_messages(
     # The answer call saw the plan with its ids and the question
     content = rig.provider.calls[1][0][0]["content"]
     assert "it_3" in content and "Where is the stay?" in content
+
+
+def test_chat_turn_calls_the_conversations_model_first(db_pool, db_conn, user):
+    chosen = ModelId.PARTICLE_1
+    conversation = create_conversation(db_conn, user.id, None, chosen)
+    rig = Rig(db_pool, [route("advice"), ANSWER], chat_choices=frozenset({MODEL, chosen}))
+    assert spoken(rig.say(conversation.id, "What should I pack for Sapa?")) == ANSWER
+    # The classifier keeps CLASSIFIER_MODELS; the answer goes to the chosen model
+    assert rig.provider.models == [MODEL, chosen]
 
 
 def test_question_without_open_trip_gets_travel_advice(db_pool, db_conn, conversation):

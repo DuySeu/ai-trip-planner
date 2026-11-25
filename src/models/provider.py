@@ -28,9 +28,18 @@ from .llm_factory import (
     StreamChunk,
 )
 
-KNOWN_MODEL_IDS = frozenset(
-    value for name, value in vars(ModelId).items() if isinstance(value, str) and name[0] != "_"
-)
+
+# The string constants of a model id class; a name like _4O_MINI (slug starting with a digit, see
+# scripts/sync_models.sh) is a model, only Python's dunder names (__module__, __doc__) are not
+def model_ids(cls: type) -> frozenset[str]:
+    return frozenset(
+        value
+        for name, value in vars(cls).items()
+        if isinstance(value, str) and not name.startswith("__")
+    )
+
+
+KNOWN_MODEL_IDS = model_ids(ModelId)
 # What an OpenRouter call raises for a model that is down or limited; anything else is a bug
 OPENROUTER_ERRORS = (
     openrouter_errors.OpenRouterError,

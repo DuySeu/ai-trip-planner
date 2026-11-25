@@ -27,13 +27,22 @@ class ConversationRow:
     request_draft: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
+    # The visitor's chosen chat model; None uses the CHAT_MODELS chain
+    chat_model: str | None
 
 
-# Start a conversation, optionally with trip fields already gathered
+# Start a conversation, optionally with trip fields already gathered and a chosen chat model
 def create_conversation(
-    conn: Connection[Any], user_id: UUID, draft: Mapping[str, Any] | None
+    conn: Connection[Any],
+    user_id: UUID,
+    draft: Mapping[str, Any] | None,
+    chat_model: str | None = None,
 ) -> ConversationRow:
-    params = {"user_id": user_id, "draft": None if draft is None else Jsonb(draft)}
+    params = {
+        "user_id": user_id,
+        "draft": None if draft is None else Jsonb(draft),
+        "chat_model": chat_model,
+    }
     with conn.cursor(row_factory=class_row(ConversationRow)) as cur:
         row = cur.execute(QUERIES["create_conversation"], params).fetchone()
     assert row is not None  # INSERT ... RETURNING always returns the row
@@ -91,6 +100,18 @@ def rename_conversation(
     params = {"id": conversation_id, "title": title}
     with conn.cursor(row_factory=class_row(ConversationRow)) as cur:
         row = cur.execute(QUERIES["rename_conversation"], params).fetchone()
+    if row is None:
+        raise NotFound(f"conversation {conversation_id}")
+    return row
+
+
+# Set or clear (None) the chosen chat model without touching updated_at
+def set_chat_model(
+    conn: Connection[Any], conversation_id: UUID, chat_model: str | None
+) -> ConversationRow:
+    params = {"id": conversation_id, "chat_model": chat_model}
+    with conn.cursor(row_factory=class_row(ConversationRow)) as cur:
+        row = cur.execute(QUERIES["set_chat_model"], params).fetchone()
     if row is None:
         raise NotFound(f"conversation {conversation_id}")
     return row

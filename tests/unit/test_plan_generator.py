@@ -20,7 +20,7 @@ from research.research_service import ResearchBundle
 from tests.fakes import FakeProvider, FakeSink
 from tests.fixtures.builders import bangkok_plan, bangkok_request, dalat_plan, dalat_request
 
-MODEL = ModelId.GEMMA_4_31B_IT
+MODEL = ModelId.LING_3_2_FLASH
 CTX = CallContext()
 REQ = bangkok_request()
 FIXTURE = bangkok_plan()

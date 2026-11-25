@@ -65,6 +65,7 @@ export const mockDb = {
           start_date: addDays(today, 30),
           end_date: addDays(today, 33),
         },
+        chat_model: null,
         created_at: ago(86_400_000),
         updated_at: ago(86_400_000),
       },
