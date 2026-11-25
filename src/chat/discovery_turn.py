@@ -127,7 +127,10 @@ def _suggest(
         recent = messages.recent_messages(conn, turn.conversation_id, HISTORY_MESSAGES + 1)
     history = tuple(m for m in recent if m.id != turn.message.id)[-HISTORY_MESSAGES:]
 
-    draft_now = RequestDraft.model_validate(known)
+    # The search and the model see the visitor's current city when the draft names no origin;
+    # the saved draft does not
+    seen = known if known.get("origin") else {**known, "origin": turn.default_origin}
+    draft_now = RequestDraft.model_validate(seen)
     language: Language = draft_now.language or ("vi" if VIETNAMESE_LETTER.search(message) else "en")
     hits = _search(deps, discovery_queries(draft_now, language)[:MAX_QUERIES])
     with deps.pool.connection() as conn:
@@ -138,7 +141,7 @@ def _suggest(
             items=[SourceInput(h.title, h.url, h.content) for h in hits],
         )
     result = DiscoverSuggestAgent(deps.router).run(
-        known,
+        seen,
         today_in_vietnam(deps.now()),
         conversation_text(history),
         sources_text(saved),
@@ -146,10 +149,11 @@ def _suggest(
         message,
         call_ctx,
     )
+    # The origin is never learned here: the model saw the current city and may write it back in
+    # another spelling. A named origin was already read from the message by the discover turn
+    learned = result.request_draft.model_copy(update={"origin": None})
     with deps.pool.connection() as conn:
-        conversations.save_draft(
-            conn, turn.conversation_id, merge_draft(known, result.request_draft)
-        )
+        conversations.save_draft(conn, turn.conversation_id, merge_draft(known, learned))
 
     metadata: dict[str, Any] = {"kind": "suggestions", "cards": []}
     spoken: list[str] = []

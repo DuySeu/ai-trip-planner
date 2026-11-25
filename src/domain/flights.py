@@ -34,10 +34,12 @@ class FlightCard(_Frozen):
     source_id: int
 
 
-# The model's answer: a short reply and the cards
+# The model's answer: a short reply, the cards, and the origin the visitor named in the message
+# (None when the message names none; code still checks the message before trusting it)
 class FlightOptionsReply(_Frozen):
     reply: str = Field(min_length=1)
     cards: tuple[FlightCard, ...] = ()
+    origin: str | None = Field(default=None, max_length=200)
 
 
 # The cards to show, as JSON with their source url: unknown sources dropped, priced cards first

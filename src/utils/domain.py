@@ -10,6 +10,9 @@ GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
+# Nominatim (OpenStreetMap): coordinates to a place name; at most 1 request per second
+REVERSE_GEOCODING_URL = "https://nominatim.openstreetmap.org/reverse"
+
 # ExchangeRate-API open endpoint: rates of one base currency, updated daily
 RATES_URL = "https://open.er-api.com/v6/latest/{base}"
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -28,6 +29,8 @@ from core.config import config
 
 LOG_FORMAT = "%(asctime)s | %(relpath)s | %(levelname)s | %(message)s"
 DATE_FORMAT = "%H:%M:%S"
+# Coordinates in a query string (httpx request lines, uvicorn access lines) are never logged
+_COORDINATE = re.compile(r"(?<![A-Za-z_])(lat|lon|latitude|longitude)=[^&\s\"]+")
 
 _RESET = "\033[0m"
 _LEVEL_COLORS = {
@@ -56,7 +59,8 @@ class ColorFormatter(logging.Formatter):
         self.use_color = use_color
         self.root = root or os.getcwd()
 
-    # Render the record, colored when use_color is set
+    # Render the record, colored when use_color is set; coordinates in query strings, in the line
+    # and in any exception text below it, become "*"
     def format(self, record: logging.LogRecord) -> str:
         try:
             relpath = os.path.relpath(record.pathname, self.root)
@@ -64,7 +68,7 @@ class ColorFormatter(logging.Formatter):
             relpath = record.pathname
         # A library file (uvicorn in the venv) is named by its logger, not by a "../" path
         record.relpath = record.name if relpath.startswith("..") else relpath
-        line = super().format(record)
+        line = _COORDINATE.sub(r"\1=*", super().format(record))
         if not self.use_color:
             return line
         color = _LEVEL_COLORS.get(record.levelno, "")

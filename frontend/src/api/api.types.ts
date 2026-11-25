@@ -63,6 +63,13 @@ export interface Place {
   lon: number;
 }
 
+// GET /weather/current - the visitor's city and its weather now; weather is null when it could not be read
+export interface CurrentLocation {
+  city: string;
+  country_code: string;
+  weather: { temperature_c: number; weather_code: number; summary: string } | null;
+}
+
 export interface Destination {
   name: string;
   country_code: string;

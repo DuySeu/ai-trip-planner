@@ -74,9 +74,10 @@ describe("DashboardPage", () => {
     expect(within(latency).getByText("- / -")).toBeInTheDocument();
   });
 
-  it("sidebar_links_to_dashboard", async () => {
+  it("sidebar_settings_menu_links_to_dashboard", async () => {
     const { user } = renderApp("/");
-    await user.click(screen.getAllByRole("link", { name: "Dashboard" })[0] as HTMLElement);
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("link", { name: "Dashboard" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
   });
 });

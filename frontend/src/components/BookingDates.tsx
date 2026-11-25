@@ -13,6 +13,8 @@ interface Props {
   kind: BookingKind;
   isOpen: boolean;
   isBusy: boolean;
+  // Shown until the visitor edits the field; an unedited origin is not sent, so the server keeps
+  // its own order (open trip, draft, current city, Hà Nội)
   defaultOrigin: string | null;
   onSearch(dates: HotelDates | FlightDates, origin: string | null): void;
 }
@@ -22,7 +24,8 @@ export function BookingDates({ messageId, kind, isOpen, isBusy, defaultOrigin, o
   const t = useT();
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [origin, setOrigin] = useState(defaultOrigin ?? "");
+  // null until the visitor types: the field then follows defaultOrigin as it changes
+  const [origin, setOrigin] = useState<string | null>(null);
   const [error, setError] = useState<MessageKey | null>(null);
   const today = todayInVietnam();
   const isHotel = kind === "hotel";
@@ -45,7 +48,7 @@ export function BookingDates({ messageId, kind, isOpen, isBusy, defaultOrigin, o
     setError(found);
     if (found) return;
     const dates = isHotel ? { check_in: start, check_out: end } : { depart: start, return: end || null };
-    onSearch(dates, isHotel ? null : origin.trim() || null);
+    onSearch(dates, isHotel || origin === null ? null : origin.trim() || null);
   };
 
   if (!isOpen) {
@@ -95,7 +98,7 @@ export function BookingDates({ messageId, kind, isOpen, isBusy, defaultOrigin, o
           <label className={LABEL} htmlFor={id("origin")}>
             {t("booking.origin")}
           </label>
-          <input id={id("origin")} className={INPUT} value={origin} onChange={(event) => setOrigin(event.target.value)} />
+          <input id={id("origin")} className={INPUT} value={origin ?? defaultOrigin ?? ""} onChange={(event) => setOrigin(event.target.value)} />
         </div>
       )}
       {error && (

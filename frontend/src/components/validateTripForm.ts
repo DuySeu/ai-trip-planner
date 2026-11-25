@@ -13,7 +13,8 @@ const MAX_TRIP_DAYS = 30;
 const MAX_TRAVELERS = 50;
 const MAX_NOTES = 2000;
 const DEFAULT_TRAVELERS = 2;
-const DEFAULT_ORIGIN = "Hà Nội";
+// The starting point when the draft names none and the visitor's location is unknown (as the backend)
+export const DEFAULT_ORIGIN = "Hà Nội";
 
 // The form's own state; destination only ever comes from the place search
 export interface TripFormValues {
@@ -74,15 +75,16 @@ export function toCreateTripBody(
   };
 }
 
-// Form values from a conversation's draft plus a picked place; a month alone leaves the dates empty
-export function fromDraft(draft: RequestDraft | null, place: Place | null): TripFormValues {
+// Form values from a conversation's draft plus a picked place; a month alone leaves the dates empty.
+// With no origin in the draft the form starts from fallbackOrigin (the visitor's current city)
+export function fromDraft(draft: RequestDraft | null, place: Place | null, fallbackOrigin = DEFAULT_ORIGIN): TripFormValues {
   const d = draft ?? {};
   const fromDraftPlace: Place | null = d.destination ? { ...d.destination, admin1: null } : null;
   const start = d.start_date ?? "";
   const end = d.end_date ?? (start && d.length_days ? addDays(start, d.length_days - 1) : "");
   return {
     destination: place ?? fromDraftPlace,
-    origin: d.origin ?? DEFAULT_ORIGIN,
+    origin: d.origin ?? fallbackOrigin,
     start_date: start,
     end_date: end,
     travelers: d.travelers ?? DEFAULT_TRAVELERS,

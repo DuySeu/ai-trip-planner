@@ -49,6 +49,7 @@ Văn bản tự do (tên, địa điểm, ghi chú, tin nhắn) được chuẩn
 | GET | `/users/{user_id}` | Thông tin user và số trip |
 | GET | `/users/{user_id}/trips` | Danh sách trip của user, phân trang |
 | GET | `/places` | Tìm điểm đến theo tên |
+| GET | `/weather/current` | Thành phố và thời tiết hiện tại ở tọa độ của người dùng |
 | POST | `/trips` | Tạo trip và đưa việc tạo plan vào hàng đợi |
 | GET | `/trips/{trip_id}` | Trip kèm trạng thái, bước đang chạy và plan hiện tại |
 | POST | `/trips/{trip_id}/retry` | Chạy lại việc tạo plan cho trip bị lỗi |
@@ -151,6 +152,28 @@ Output 200, `data` là mảng `PlaceOut`:
 
 Lỗi: 422 khi `q` quá ngắn hoặc quá dài; 503 `unavailable` khi dịch vụ tìm địa điểm lỗi.
 
+## Weather
+
+### GET /weather/current
+
+Thành phố ở tọa độ của người dùng (Nominatim) và thời tiết lúc này ở đó (Open-Meteo), cho banner và origin mặc định của chat. Frontend lấy `lat`, `lon` gần đúng theo IP của người dùng: trình duyệt gọi thẳng `https://ipwho.is/` (không xin quyền vị trí, không cần key), lưu tọa độ trong `localStorage` 6 giờ, rồi gọi route này mỗi lần tải trang và mỗi lần đổi ngôn ngữ. Backend không thấy IP thật khi chạy sau Docker NAT, nên không tự tra. Tọa độ được làm tròn 2 chữ số (khoảng 1 km) trước khi gửi đi, chỉ cache trong bộ nhớ của process API (thành phố 1 ngày, thời tiết 30 phút), không ghi vào database và không có trong log. Code: `src/api/routes/weather.py:21`.
+
+- Query: `lat` (bắt buộc, -90 đến 90), `lon` (bắt buộc, -180 đến 180), `language` (`en` hoặc `vi`, mặc định `en`, ngôn ngữ của tên thành phố).
+
+Output 200, `data` là `CurrentLocationOut`:
+
+```json
+{
+  "city": "Thành phố Hồ Chí Minh",
+  "country_code": "VN",
+  "weather": { "temperature_c": 28.4, "weather_code": 1, "summary": "Mainly clear" }
+}
+```
+
+- `weather`: `null` khi không đọc được thời tiết; `weather_code` là mã WMO, `summary` là mô tả tiếng Anh của mã đó.
+
+Lỗi: 422 khi thiếu hoặc sai `lat`, `lon`, `language`; 503 `unavailable` khi không tìm được thành phố (dịch vụ lỗi, hoặc tọa độ ở biển hay nơi không có tên).
+
 ## Trips
 
 Trạng thái trip (`status`): `queued`, `researching`, `planning`, `ready`, `failed`. Bước của job đang chạy (`stage`): `researching`, `planning`, `validating`, hoặc `null` khi không có job nào đang chạy.
@@ -159,7 +182,7 @@ Trạng thái trip (`status`): `queued`, `researching`, `planning`, `ready`, `fa
 
 Tạo trip và job tạo plan trong cùng một transaction. API trả về ngay; worker sẽ lấy job và viết plan, client poll `GET /trips/{id}` để xem tiến độ. Code: `src/api/routes/trips.py:23`.
 
-Payload (`CreateTripBody` = `TripRequest` + `user_id` + `message_id` tùy chọn, `src/domain/trip_request.py:74`):
+Payload (`CreateTripBody` = `TripRequest` + `user_id` + `message_id` tùy chọn, `src/domain/trip_request.py:73`):
 
 ```json
 {
@@ -280,7 +303,7 @@ Tải plan hiện tại dưới dạng file Excel dựng từ `data/trip-templat
 
 ### POST /conversations
 
-Bắt đầu hội thoại, có thể mang theo các field của form đã nhập dở. Code: `src/api/routes/chat.py:66`.
+Bắt đầu hội thoại, có thể mang theo các field của form đã nhập dở. Code: `src/api/routes/chat.py:73`.
 
 Payload:
 
@@ -326,7 +349,7 @@ Lỗi: 404 khi không có user; 422 khi draft sai ràng buộc hoặc `chat_mode
 
 ### GET /users/{user_id}/conversations
 
-Danh sách hội thoại của user, hội thoại có hoạt động gần nhất đứng trước. Code: `src/api/routes/chat.py:75`.
+Danh sách hội thoại của user, hội thoại có hoạt động gần nhất đứng trước. Code: `src/api/routes/chat.py:85`.
 
 - Query: `limit` (1 đến 100, mặc định 20), `offset` (mặc định 0).
 - Output 200: `data` là mảng `ConversationOut`, `meta = { total, limit, offset }`.
@@ -334,7 +357,7 @@ Danh sách hội thoại của user, hội thoại có hoạt động gần nh�
 
 ### GET /conversations/{conversation_id}
 
-Hội thoại kèm một trang tin nhắn. Code: `src/api/routes/chat.py:94`.
+Hội thoại kèm một trang tin nhắn. Code: `src/api/routes/chat.py:104`.
 
 - Query: `limit` (1 đến 200, mặc định 50), `offset` (mặc định 0). `meta.total` là tổng số tin nhắn.
 
@@ -402,7 +425,7 @@ Lỗi: 404 khi không có hội thoại; 422 khi body rỗng, title rỗng hoặ
 
 ### PATCH /conversations/{conversation_id}/messages/{message_id}
 
-Hủy một form tạo trip, hoặc trả lời một bước của thẻ hỏi nhu cầu. Không gọi AI. Code: `src/api/routes/chat.py:130`.
+Hủy một form tạo trip, hoặc trả lời một bước của thẻ hỏi nhu cầu. Không gọi AI. Code: `src/api/routes/chat.py:143`.
 
 Payload hủy form (`metadata.status` từ `open` sang `canceled`, giữ nguyên `draft`):
 
@@ -419,10 +442,10 @@ Payload trả lời thẻ hỏi nhu cầu đang `open`:
 | Field | Bắt buộc | Ràng buộc |
 |---|---|---|
 | `step` | có | 1 đến 6: `styles`, `travelers`, `budget`, `origin`, `when`, `length` |
-| `choice` | không | Id nút của bước (`OPTIONS`, `src/domain/questionnaire.py:56`); bước 1 là mảng id. `null` khi khách nhập tay hoặc bỏ qua |
+| `choice` | không | Id nút của bước (`OPTIONS`, `src/domain/questionnaire.py:58`); bước 1 là mảng id. `null` khi khách nhập tay hoặc bỏ qua |
 | `answers` | không | Giá trị khách nhập khi `choice` là `null`, chỉ các trường của bước đó: `travel_styles`, `travelers`, `budget_amount`, `origin`, `start_date` (không ở quá khứ), `length_days`. Bước 6 nhận thêm `notes` cạnh một nút |
 
-Server đổi nút sang giá trị (`answer_for`, `src/domain/questionnaire.py:69`), gộp vào `metadata.answers` và `request_draft` của hội thoại, ghi `choices[step]`, và đặt `step` bằng giá trị lớn hơn giữa bước cũ và bước vừa trả lời. `choice` và `answers` cùng rỗng là bỏ qua bước.
+Server đổi nút sang giá trị (`answer_for`, `src/domain/questionnaire.py:71`), gộp vào `metadata.answers` và `request_draft` của hội thoại, ghi `choices[step]`, và đặt `step` bằng giá trị lớn hơn giữa bước cũ và bước vừa trả lời. `choice` và `answers` cùng rỗng là bỏ qua bước.
 
 Output 200: `data` là `MessageOut` (xem `GET /conversations/{conversation_id}`).
 
@@ -430,7 +453,7 @@ Lỗi: 404 khi không có tin nhắn hoặc tin nhắn không thuộc hội tho�
 
 ### DELETE /conversations/{conversation_id}
 
-Xóa hội thoại và toàn bộ tin nhắn. Code: `src/api/routes/chat.py:141`.
+Xóa hội thoại và toàn bộ tin nhắn. Code: `src/api/routes/chat.py:173`.
 
 - Payload: không có.
 - Output: 204, không có body.
@@ -440,7 +463,7 @@ Xóa hội thoại và toàn bộ tin nhắn. Code: `src/api/routes/chat.py:141`
 
 ### POST /chat
 
-Gửi một tin nhắn vào hội thoại và nhận câu trả lời dạng server-sent events. Nếu có `trip_id`, câu hỏi gắn với trip đang mở và assistant có thể sửa plan của trip đó. Tin nhắn đầu tiên đặt làm tiêu đề hội thoại nếu hội thoại chưa có (80 ký tự đầu). Code: `src/api/routes/chat.py:170`.
+Gửi một tin nhắn vào hội thoại và nhận câu trả lời dạng server-sent events. Nếu có `trip_id`, câu hỏi gắn với trip đang mở và assistant có thể sửa plan của trip đó. Tin nhắn đầu tiên đặt làm tiêu đề hội thoại nếu hội thoại chưa có (80 ký tự đầu). Code: `src/api/routes/chat.py:183`.
 
 Thường thì router chọn luồng trả lời. Khi có `discover_message_id` hoặc `booking_message_id`, server bỏ qua router và chạy luồng của thẻ đó: gợi ý điểm đến từ draft hiện có, hoặc tìm khách sạn/vé với ngày khách chọn. Thẻ được đặt `status = done` trước khi trả lời.
 
@@ -464,9 +487,12 @@ Payload:
 | `discover_message_id` | không | Id của thẻ hỏi nhu cầu đang `open` trong hội thoại này; không gửi cùng `booking_message_id` |
 | `booking_message_id` | không | Id của thẻ chờ ngày (`need_dates`) trong hội thoại này; cần `dates` |
 | `dates` | khi có `booking_message_id` | Khách sạn: `check_in`, `check_out` (không ở quá khứ, trả phòng sau nhận phòng, tối đa 30 đêm). Vé: `depart` (không ở quá khứ), `return` tùy chọn (không trước `depart`) |
-| `origin` | không | Nơi xuất phát cho thẻ vé; bắt buộc khi trip đang mở và draft đều không có |
+| `origin` | không | Nơi xuất phát trên thẻ vé; frontend chỉ gửi khi người dùng sửa ô này |
+| `default_origin` | không | Thành phố hiện tại của người dùng (từ `GET /weather/current`), 1 đến 200 ký tự; không gửi thì là "Hà Nội". Không được lưu |
 
-Ngày và nơi xuất phát được ghi vào `request_draft` khi draft chưa có.
+Ngày và nơi xuất phát chọn trên thẻ được ghi vào `request_draft` khi draft chưa có.
+
+Nơi xuất phát được chọn theo thứ tự: nơi người dùng nói trong tin nhắn hoặc chọn trên thẻ, `origin` của trip đang mở, `request_draft.origin`, `default_origin`, "Hà Nội". `default_origin` không bao giờ được ghi vào `request_draft`; nơi người dùng tự nói khi tìm vé thì có.
 
 Thẻ được đặt `done` trước khi lưu tin nhắn của người dùng và trước khi stream bắt đầu, nên lần bấm thứ hai (cùng tab hay tab khác) nhận 409 và không lưu gì. Nếu stream lỗi hoặc bị đóng trước token đầu tiên, thẻ được mở lại (`open` hoặc `need_dates`) để bấm lần nữa.
 

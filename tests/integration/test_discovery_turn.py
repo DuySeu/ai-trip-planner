@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from collections.abc import Sequence
@@ -122,9 +123,16 @@ def discover(rig: Rig, turn: ChatTurn) -> list[ChatEvent]:
 
 
 # Open a card, then run the turn the card's suggest button starts
-def suggest(rig: Rig, db_conn, conversation, content: str = "Ideas please") -> list[ChatEvent]:
+def suggest(
+    rig: Rig,
+    db_conn,
+    conversation,
+    content: str = "Ideas please",
+    default_origin: str = "Hà Nội",
+) -> list[ChatEvent]:
     card = add_message(db_conn, conversation.id, "assistant", "", "discover", CARD)
     turn = turn_for(db_conn, conversation, content, FollowUp(card.id, "discover"))
+    turn = dataclasses.replace(turn, default_origin=default_origin)
     return list(run_suggest_turn(turn, rig.deps, ctx(turn)))
 
 
@@ -415,7 +423,7 @@ def test_cards_without_any_supported_country_get_one_repair_round(db_pool, db_co
 
 
 def test_a_failed_search_is_skipped_and_the_turn_goes_on(db_pool, db_conn, conversation):
-    first = discovery_queries(RequestDraft(), "en")[0]
+    first = discovery_queries(RequestDraft(origin="Hà Nội"), "en")[0]
     search = FakeSearch({first: ResearchFailed("down")}, default=HITS)
     rig = Rig(db_pool, [suggest_answer("Ideas.", card("Krabi", "TH", [1]))], search)
     events = suggest(rig, db_conn, conversation)
@@ -463,3 +471,37 @@ def test_discovery_queries_are_vietnamese_for_vi():
 def test_merge_draft_ignores_empty_values():
     merged = merge_draft({"origin": "Hanoi"}, RequestDraft(travelers=2))
     assert merged == {"origin": "Hanoi", "travelers": 2}
+
+
+def test_suggest_queries_use_default_origin_when_draft_has_none(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, {"travel_styles": ["food"]})
+    # The model echoes the origin it was given; a default origin still stays out of the draft
+    answer = suggest_answer("Ideas.", card("Krabi", "TH", [1]), draft={"origin": "Da Nang City"})
+    rig = Rig(db_pool, [answer], FakeSearch(default=HITS))
+    suggest(rig, db_conn, conversation, default_origin="Đà Nẵng")
+    draft = RequestDraft(origin="Đà Nẵng", travel_styles=("food",))
+    assert rig.search.calls == list(discovery_queries(draft, "en"))[:MAX_QUERIES]
+    assert "Đà Nẵng" in rig.provider.calls[0][0][0]["content"]
+    assert get_conversation(db_conn, conversation.id).request_draft == {"travel_styles": ["food"]}
+
+
+def test_suggest_queries_keep_draft_origin_over_default(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, {"origin": "Huế", "travel_styles": ["food"]})
+    rig = Rig(
+        db_pool, [suggest_answer("Ideas.", card("Krabi", "TH", [1]))], FakeSearch(default=HITS)
+    )
+    suggest(rig, db_conn, conversation, default_origin="Đà Nẵng")
+    assert all("Đà Nẵng" not in q for q in rig.search.calls)
+    assert all("from Huế" in q for q in rig.search.calls)
+
+
+def test_discover_saves_an_origin_named_in_the_message(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, {**FULL_DRAFT, "origin": None})
+    extract = json.dumps({"origin": "Cần Thơ"})
+    answer = suggest_answer("Ideas.", card("Krabi", "TH", [1]), draft={"origin": "Can Tho"})
+    rig = Rig(db_pool, [extract, answer], FakeSearch(default=HITS))
+    turn = dataclasses.replace(
+        turn_for(db_conn, conversation, "Ideas from Can Tho"), default_origin="Đà Nẵng"
+    )
+    discover(rig, turn)
+    assert get_conversation(db_conn, conversation.id).request_draft["origin"] == "Cần Thơ"

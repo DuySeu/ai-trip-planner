@@ -3,26 +3,28 @@ import {
   ArrowUp,
   ArrowUpRight,
   BedDouble,
+  CalendarDays,
   Check,
   ChevronDown,
   CloudSun,
+  Compass,
   type LucideIcon,
   Maximize2,
   Mic,
   Minimize2,
   Plane,
   Plus,
+  Search,
   Sparkles,
   TrainFront,
   TriangleExclamationPoint,
-  Users,
-  Waves,
 } from "lucide-react";
-import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { Message, Place, RequestDraft, SuggestionCard as Card } from "../api/api.types.ts";
 import { apiRequest } from "../api/client.ts";
 import { createConversation, useConversation, useSetChatModel } from "../api/conversations.ts";
+import { useCurrentLocation } from "../api/location.ts";
 import { useModels } from "../api/models.ts";
 import { useChatStream } from "../chat/useChatStream.ts";
 import { formatDay } from "../format/dates.ts";
@@ -38,6 +40,7 @@ import { DiscoverQuestionnaire } from "./DiscoverQuestionnaire.tsx";
 import { FlightCard } from "./FlightCard.tsx";
 import { HotelCard } from "./HotelCard.tsx";
 import { SuggestionCard } from "./SuggestionCard.tsx";
+import { DEFAULT_ORIGIN } from "./validateTripForm.ts";
 import { BANNER, BUTTON, TITLE } from "../styles/recipes.ts";
 
 const MAX_MESSAGE = 4000;
@@ -52,10 +55,20 @@ const TRIP_EXAMPLES: { key: MessageKey; icon: LucideIcon }[] = [
   { key: "chat.example3", icon: TrainFront },
 ];
 const DISCOVERY_EXAMPLES: { key: MessageKey; icon: LucideIcon }[] = [
-  { key: "chat.discoveryExample1", icon: Waves },
-  { key: "chat.discoveryExample2", icon: Users },
-  { key: "chat.discoveryExample3", icon: Plane },
+  { key: "chat.discoveryExample1", icon: Search },
+  { key: "chat.discoveryExample2", icon: BedDouble },
+  { key: "chat.discoveryExample3", icon: Compass },
+  { key: "chat.discoveryExample4", icon: Plane },
+  { key: "chat.discoveryExample5", icon: CalendarDays },
 ];
+// The composer's move from the middle of an empty chat to the bottom, as the sheet and drawer move
+const COMPOSER_MOVE_MS = 250;
+const COMPOSER_MOVE_EASING = "cubic-bezier(0.2, 0, 0, 1)";
+// Thread and composer area share the height. The composer area starts one pill [52px] plus the
+// thread's own padding [2 x 16px] larger, so the single-line pill's centre sits on the middle of the panel
+const CENTERED_FORM = "flex-[1_1_5.25rem]";
+const EXAMPLE_ROW =
+  "group/example flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-sm px-3 text-left text-sm transition-colors duration-120 ease-standard hover:bg-accent";
 const EXAMPLE_CARD =
   "group/example flex h-full w-full cursor-pointer items-start gap-3 rounded-md border border-border bg-card p-3 text-left text-sm transition duration-120 ease-standard hover:border-input hover:bg-accent active:scale-[0.99]";
 const USER_BUBBLE =
@@ -67,7 +80,7 @@ const PLAN_UPDATED = "text-sm font-medium text-primary";
 interface Props {
   header?: ReactNode;
   conversationId: string | null;
-  trip: { id: string; planRevision: number } | null;
+  trip: { id: string; planRevision: number; origin: string } | null;
   disabledReason: MessageKey | null;
   onConversationCreated(conversationId: string): void;
 }
@@ -85,8 +98,12 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
   const [pendingModel, setPendingModel] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
+  const pillRef = useRef<HTMLDivElement>(null);
+  // Where the centered composer was when the first message went out, to slide it down from there
+  const centeredTopRef = useRef<number | null>(null);
   const conversation = useConversation(conversationId);
   const setChatModel = useSetChatModel();
+  const city = useCurrentLocation().data?.city;
   // The pick stays shown while a just-created conversation loads
   const chatModel = conversation.data ? conversation.data.chat_model : pendingModel;
 
@@ -136,13 +153,31 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
   const canSend = !isDisabled && !isStreaming && trimmed.length > 0 && !isTooLong;
   const isLoading = conversationId !== null && conversation.isPending;
   const isEmpty = messages.length === 0 && !isStreaming && !isLoading;
+  // An empty discovery chat puts the composer in the middle with the examples under it
+  const isCentered = isEmpty && trip === null && disabledReason === null;
   const lastAssistant = messages.findLast((m) => m.role === "assistant");
+
+  // Slide the composer from the middle down to its place at the bottom once the first message goes out
+  useLayoutEffect(() => {
+    const pill = pillRef.current;
+    const from = centeredTopRef.current;
+    if (isCentered || from === null || !pill) return;
+    centeredTopRef.current = null;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const distance = from - pill.getBoundingClientRect().top;
+    if (reduce || distance === 0 || typeof pill.animate !== "function") return;
+    pill.animate([{ transform: `translateY(${distance}px)` }, { transform: "none" }], {
+      duration: COMPOSER_MOVE_MS,
+      easing: COMPOSER_MOVE_EASING,
+    });
+  }, [isCentered]);
 
   // Send a message; the composer gets the text back if the send failed
   const submit = async (content: string) => {
     const clean = content.trim();
     if (clean.length === 0 || clean.length > MAX_MESSAGE || isDisabled || isStreaming) return;
     isPinnedRef.current = true;
+    if (isCentered) centeredTopRef.current = pillRef.current?.getBoundingClientRect().top ?? null;
     setText("");
     setIsMultiline(false);
     setIsExpanded(false);
@@ -229,7 +264,7 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
           kind={meta.kind}
           isOpen={meta.status === "need_dates"}
           isBusy={isStreaming}
-          defaultOrigin={conversation.data?.request_draft?.origin ?? null}
+          defaultOrigin={trip?.origin ?? conversation.data?.request_draft?.origin ?? city ?? DEFAULT_ORIGIN}
           onSearch={(dates, origin) =>
             void chat.send(t("booking.searchMessage"), { booking_message_id: message.id, dates, ...(origin ? { origin } : {}) })
           }
@@ -277,14 +312,15 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
   return (
     <div
       ref={threadRef}
-      className="flex h-full min-h-0 flex-col overflow-y-auto"
+      className="relative flex h-full min-h-0 flex-col overflow-y-auto"
       onScroll={(event) => {
         const el = event.currentTarget;
         isPinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
       }}
     >
       {header && (
-        <div className="pointer-events-none sticky top-0 z-10 shrink-0">
+        // While the composer is centred the header floats, so the middle of the page is the middle of the panel
+        <div className={`pointer-events-none top-0 z-10 shrink-0 ${isCentered ? "absolute inset-x-0" : "sticky"}`}>
           <header className="pointer-events-auto flex min-h-16 items-center bg-background px-4 py-3 sm:px-6 lg:px-8">
             {header}
           </header>
@@ -301,22 +337,36 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
         {isLoading && <p className="text-sm text-muted-foreground">{t("chat.loading")}</p>}
         {conversation.isError && <p className={BANNER.error}>{t(errorKey(conversation.error))}</p>}
 
-        {isEmpty && disabledReason === null && (
+        {isCentered && (
+          <section className="mt-auto flex animate-pop-in flex-col items-center gap-6 pt-6 text-center" aria-labelledby="chat-welcome">
+            <span className="flex size-14 items-center justify-center rounded-full bg-accent text-accent-foreground ring-8 ring-accent/40">
+              <Sparkles size={28} strokeWidth={1.75} aria-hidden="true" />
+            </span>
+            <div className="flex flex-col gap-2">
+              <h2 id="chat-welcome" className={TITLE.page}>
+                {t("chat.welcomeDiscoveryTitle")}
+              </h2>
+              <p className="text-muted-foreground">{t("chat.discoveryPrompt")}</p>
+            </div>
+          </section>
+        )}
+
+        {isEmpty && trip !== null && disabledReason === null && (
           <section
-            className={`m-auto flex w-full animate-pop-in flex-col items-center gap-6 py-6 text-center ${trip === null ? "max-w-3xl" : "max-w-md"}`}
+            className="m-auto flex w-full max-w-md animate-pop-in flex-col items-center gap-6 py-6 text-center"
             aria-labelledby="chat-welcome"
           >
             <span className="flex size-14 items-center justify-center rounded-full bg-accent text-accent-foreground ring-8 ring-accent/40">
               <Sparkles size={28} strokeWidth={1.75} aria-hidden="true" />
             </span>
             <div className="flex flex-col gap-2">
-              <h2 id="chat-welcome" className={trip === null ? TITLE.page : TITLE.section}>
-                {t(trip === null ? "chat.welcomeDiscoveryTitle" : "chat.welcomeTripTitle")}
+              <h2 id="chat-welcome" className={TITLE.section}>
+                {t("chat.welcomeTripTitle")}
               </h2>
-              <p className="text-muted-foreground">{t(trip === null ? "chat.discoveryPrompt" : "chat.welcomeTripBody")}</p>
+              <p className="text-muted-foreground">{t("chat.welcomeTripBody")}</p>
             </div>
-            <ul className={`grid w-full gap-3 ${trip === null ? "sm:grid-cols-3" : ""}`}>
-              {(trip === null ? DISCOVERY_EXAMPLES : TRIP_EXAMPLES).map(({ key, icon: Icon }) => (
+            <ul className="grid w-full gap-3">
+              {TRIP_EXAMPLES.map(({ key, icon: Icon }) => (
                 <li key={key}>
                   <button type="button" className={EXAMPLE_CARD} onClick={() => void submit(t(key))}>
                     <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors duration-120 ease-standard group-hover/example:bg-card group-hover/example:text-primary">
@@ -362,11 +412,20 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
               </li>
               <li className={ASSISTANT}>
                 <span className="sr-only">{t("chat.assistant")}: </span>
-                {(state.text || state.metadata === null) && (
+                {state.text ? (
                   <p className={TEXT}>
                     {state.text}
                     <span className="ml-0.5 inline-block h-4 w-2 bg-muted-foreground align-[-2px]" aria-hidden="true" />
                   </p>
+                ) : (
+                  state.metadata === null && (
+                    <p className="flex min-h-9 items-center gap-2 text-sm font-medium text-muted-foreground">
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground">
+                        <Sparkles size={16} strokeWidth={1.75} aria-hidden="true" className="animate-breathe" />
+                      </span>
+                      <span className="animate-breathe">{t("chat.thinking")}</span>
+                    </p>
+                  )
                 )}
                 {renderMetadata(streamed)}
                 {state.hasUpdatedPlan && <p className={PLAN_UPDATED}>{t("chat.planUpdated")}</p>}
@@ -384,14 +443,14 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
       </div>
 
       <form
-        className="pointer-events-none sticky bottom-0 z-10 flex shrink-0 flex-col"
+        className={`pointer-events-none sticky bottom-0 z-10 flex shrink-0 flex-col ${isCentered ? CENTERED_FORM : ""}`}
         onSubmit={(event) => {
           event.preventDefault();
           if (canSend) void submit(text);
         }}
       >
-        <div className={`relative z-10 bg-linear-to-b from-transparent px-4 pt-6 ${trip === null ? "to-background" : "to-card"}`}>
-          <div className={`pointer-events-auto @container ${trip === null ? "mx-auto w-full sm:w-1/2" : ""}`}>
+        <div className={`relative z-10 px-4 ${isCentered ? "" : `bg-linear-to-b from-transparent pt-6 ${trip === null ? "to-background" : "to-card"}`}`}>
+          <div ref={pillRef} className={`pointer-events-auto @container ${trip === null ? "mx-auto w-full sm:w-1/2" : ""}`}>
             <div
               className={`grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-1 bg-muted p-1.5 transition duration-120 ease-standard focus-within:ring-3 focus-within:ring-ring/30 ${isMultiline ? PILL_STACKED : PILL_SINGLE} ${isDisabled ? "opacity-60" : ""}`}
             >
@@ -450,7 +509,27 @@ export function ChatPanel({ header, conversationId, trip, disabledReason, onConv
             </div>
           </div>
         </div>
-        <div className={`pointer-events-auto flex flex-col gap-1 px-4 pt-2 pb-3 text-center ${trip === null ? "bg-background" : "bg-card"}`}>
+        {isCentered && (
+          <ul className="pointer-events-auto mx-auto flex w-full animate-pop-in flex-col px-4 pt-3 sm:w-1/2 sm:px-0" aria-label={t("chat.examples")}>
+            {DISCOVERY_EXAMPLES.map(({ key, icon: Icon }) => (
+              <li key={key} className="border-b border-border last:border-b-0">
+                <button type="button" className={EXAMPLE_ROW} title={t(key)} onClick={() => void submit(t(key))}>
+                  <Icon size={20} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-muted-foreground group-hover/example:text-primary" />
+                  <span className="min-w-0 flex-1 truncate">{t(key)}</span>
+                  <ArrowUpRight
+                    size={16}
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity duration-120 ease-standard group-hover/example:opacity-100"
+                  />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div
+          className={`pointer-events-auto flex flex-col gap-1 px-4 pt-2 pb-3 text-center ${trip === null ? "bg-background" : "bg-card"} ${isCentered ? "mt-auto" : ""}`}
+        >
           {disabledReason !== null && <p className="text-sm text-muted-foreground">{t(disabledReason)}</p>}
           {setChatModel.isError && (
             <p className="text-sm text-destructive" role="alert">

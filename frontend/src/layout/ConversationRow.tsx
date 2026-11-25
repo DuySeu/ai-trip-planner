@@ -1,19 +1,15 @@
 import { EllipsisVertical, Pencil, Trash } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink } from "react-router";
 import type { Conversation } from "../api/api.types.ts";
 import { formatDateTime } from "../format/dates.ts";
 import { useT } from "../i18n/LanguageProvider.tsx";
 import { BUTTON } from "../styles/recipes.ts";
+import { MENU_ITEM, useAnchoredMenu } from "./useAnchoredMenu.ts";
 
-const MENU_GAP_PX = 4;
-const VIEWPORT_MARGIN_PX = 8;
 const ROW = "flex min-h-11 min-w-0 items-center rounded-sm py-2 pr-11 pl-3 no-underline group-hover:bg-accent";
 const ACTIVE = "bg-accent text-accent-foreground";
 const SHOW_ON_HOVER = "opacity-0 transition-opacity duration-120 ease-standard group-hover:opacity-100";
-const MENU_ITEM =
-  "flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-left text-sm font-medium whitespace-nowrap hover:bg-accent";
 
 interface Props {
   conversation: Conversation;
@@ -25,49 +21,8 @@ interface Props {
 // One sidebar conversation: a one-line title and a menu with the update time, rename and delete
 export function ConversationRow({ conversation, onNavigate, onRename, onDelete }: Props) {
   const t = useT();
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const { isOpen: isMenuOpen, setIsOpen: setIsMenuOpen, position: menuPosition, triggerRef, menuRef } = useAnchoredMenu();
   const title = conversation.title ?? t("home.untitledChat");
-
-  // Place the menu right of the button, top edges aligned; flip left or shift up when the viewport has no room
-  // (it lives in body, outside the sidebar's scroll clip)
-  useLayoutEffect(() => {
-    const trigger = triggerRef.current;
-    const menu = menuRef.current;
-    if (!isMenuOpen || !trigger || !menu) return;
-    const anchor = trigger.getBoundingClientRect();
-    const right = anchor.right + MENU_GAP_PX;
-    const fitsRight = right + menu.offsetWidth <= window.innerWidth - VIEWPORT_MARGIN_PX;
-    setMenuPosition({
-      top: Math.max(VIEWPORT_MARGIN_PX, Math.min(anchor.top, window.innerHeight - VIEWPORT_MARGIN_PX - menu.offsetHeight)),
-      left: Math.max(VIEWPORT_MARGIN_PX, fitsRight ? right : anchor.left - MENU_GAP_PX - menu.offsetWidth),
-    });
-  }, [isMenuOpen]);
-
-  // Close the menu on a press outside it, on Escape, or when the page scrolls or resizes under it
-  useEffect(() => {
-    if (!isMenuOpen) return;
-    const close = () => setIsMenuOpen(false);
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) close();
-    };
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [isMenuOpen]);
 
   return (
     <li className="group relative">
@@ -126,7 +81,6 @@ export function ConversationRow({ conversation, onNavigate, onRename, onDelete }
           </div>,
           document.body,
         )}
-
     </li>
   );
 }

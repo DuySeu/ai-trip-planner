@@ -87,6 +87,8 @@ class SendMessageBody(BaseModel):
     booking_message_id: UUID | None = None
     dates: BookingDates | None = None
     origin: PlaceText | None = None
+    # The visitor's current city, the starting point when nothing else names one; never saved
+    default_origin: PlaceText | None = None
 
     # One card at a time, and a booking card needs its dates
     @model_validator(mode="after")

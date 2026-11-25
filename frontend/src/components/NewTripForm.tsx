@@ -3,13 +3,14 @@ import { useNavigate } from "react-router";
 import type { Place } from "../api/api.types.ts";
 import { ApiError } from "../api/client.ts";
 import { createConversation, useConversation } from "../api/conversations.ts";
+import { useCurrentLocation } from "../api/location.ts";
 import { useCreateTrip } from "../api/trips.ts";
 import { errorKey } from "../i18n/errorKey.ts";
 import { useLanguage, useT } from "../i18n/LanguageProvider.tsx";
 import { useSession } from "../session/session.ts";
 import { BANNER, SKELETON } from "../styles/recipes.ts";
 import { TripForm } from "./TripForm.tsx";
-import { fromDraft, toCreateTripBody, toDraft, type TripFormValues } from "./validateTripForm.ts";
+import { DEFAULT_ORIGIN, fromDraft, toCreateTripBody, toDraft, type TripFormValues } from "./validateTripForm.ts";
 
 interface Props {
   conversationId: string | null;
@@ -25,6 +26,8 @@ export function NewTripForm({ conversationId, place, isMissingPlace, isBare = fa
   const session = useSession();
   const navigate = useNavigate();
   const conversation = useConversation(conversationId);
+  // May arrive after the form opens; TripForm then shows it unless the visitor edited the field
+  const city = useCurrentLocation().data?.city;
   const createTrip = useCreateTrip();
   const getIdeas = useMutation({ mutationFn: createConversation });
 
@@ -39,8 +42,10 @@ export function NewTripForm({ conversationId, place, isMissingPlace, isBare = fa
   // Carry what is filled in so far into a new ideas chat
   const handleGetIdeas = (values: TripFormValues) => {
     if (!session) return;
+    // A prefilled default (current city or Hà Nội) is not the visitor's answer, so it stays out
+    const isDefaultOrigin = !conversation.data?.request_draft?.origin && values.origin === (city ?? DEFAULT_ORIGIN);
     getIdeas.mutate(
-      { user_id: session.userId, draft: toDraft(values) },
+      { user_id: session.userId, draft: toDraft(isDefaultOrigin ? { ...values, origin: "" } : values) },
       { onSuccess: (created) => navigate(`/chat/${created.id}`) },
     );
   };
@@ -58,7 +63,7 @@ export function NewTripForm({ conversationId, place, isMissingPlace, isBare = fa
         </p>
       )}
       <TripForm
-        initialValues={fromDraft(conversation.data?.request_draft ?? null, place)}
+        initialValues={fromDraft(conversation.data?.request_draft ?? null, place, city)}
         initialErrors={isMissingPlace ? { destination: "form.errors.destination" } : {}}
         isBare={isBare}
         submit={{

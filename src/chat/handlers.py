@@ -19,7 +19,7 @@ from core.prompts import (
     travel_advice_prompt,
     trip_research_answer_prompt,
 )
-from db.repositories import jobs, messages, research, trips
+from db.repositories import conversations, jobs, messages, research, trips
 from db.repositories.messages import MessageRow
 from db.repositories.research import SourceInput, SourceRow
 from db.repositories.trips import TripRow
@@ -159,6 +159,7 @@ def build_prompt(
     message: str,
     trip_details: bool = True,
     search_results: str | None = None,
+    starting_point: str | None = None,
 ) -> str:
     parts = [f"<trips>\n{data.trips}\n</trips>" if data.trips else ""]
     if trip_details and data.trip is not None and data.request is not None:
@@ -183,6 +184,8 @@ def build_prompt(
             parts.append(f"<sources>\n{sources_text(few)}\n</sources>")
     if search_results is not None:
         parts.append(f"<search_results>\n{search_results or 'none'}\n</search_results>")
+    if starting_point is not None:
+        parts.append(f"<visitor>\nstarting_point: {data_text(starting_point)}\n</visitor>")
     parts += [conversation_text(data.history), f"<request>\n{message}\n</request>"]
     return "\n\n".join(p for p in parts if p)
 
@@ -208,7 +211,15 @@ def answer_about_plan(
 def give_travel_advice(
     data: ChatContext, turn: ChatTurn, deps: ChatDeps, call_ctx: CallContext
 ) -> Iterator[ChatEvent]:
-    content = build_prompt(data, turn.message.content, trip_details=False)
+    # The saved answer outranks the visitor's current city
+    with deps.pool.connection() as conn:
+        draft = conversations.get_conversation(conn, turn.conversation_id).request_draft or {}
+    content = build_prompt(
+        data,
+        turn.message.content,
+        trip_details=False,
+        starting_point=str(draft.get("origin") or turn.default_origin),
+    )
     yield from stream_answer(deps, travel_advice_prompt, content, call_ctx)
 
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-An AI trip planner: a visitor fills a form or chats (travel advice, a 6-step questionnaire and destination ideas, hotel and ticket search, a trip form prefilled from the chat), the backend researches the trip, writes a day-by-day plan, lets the visitor chat to change it, and exports it to `.xlsx` from `data/trip-template.xlsx`. Chat intents and the router are described in `docs/chat-intents.md`.
+An AI trip planner: a visitor fills a form or chats (travel advice, a 6-step questionnaire and destination ideas, hotel and ticket search, a trip form prefilled from the chat), the backend researches the trip, writes a day-by-day plan, lets the visitor chat to change it, and exports it to `.xlsx` from `data/trip-template.xlsx`. The browser looks up an approximate position from the visitor's IP (ipwho.is, no permission prompt); `GET /weather/current` names the city and its weather for a header chip, and that city is the default origin of chat and new trips (Hà Nội when unknown), never stored. Chat intents and the router are described in `docs/chat-intents.md`.
 
 ## Commands
 

@@ -3,6 +3,7 @@ import { type ReactNode, useState } from "react";
 import { Link, useMatch } from "react-router";
 import { useT } from "../i18n/LanguageProvider.tsx";
 import { BUTTON } from "../styles/recipes.ts";
+import { LocationBanner } from "./LocationBanner.tsx";
 import { Preferences } from "./Preferences.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 
@@ -75,6 +76,7 @@ export function AppShell({ children, hasNav }: Props) {
             <MapIcon size={20} strokeWidth={1.75} aria-hidden="true" className="text-primary" />
             {t("app.name")}
           </Link>
+          <LocationBanner className="ml-auto" />
         </header>
         <main
           className={

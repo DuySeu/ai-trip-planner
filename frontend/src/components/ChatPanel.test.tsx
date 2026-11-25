@@ -7,6 +7,7 @@ import { DOMESTIC_TRIP_ID, HOTEL_CARDS, LIGHTNING_MODEL, SEED_CONVERSATION_ID } 
 import { mockDb } from "../mocks/mockDb.ts";
 import { server } from "../mocks/server.ts";
 import { addDays, todayInVietnam } from "../format/dates.ts";
+import { fakeIpLocation } from "../test/ipLocation.ts";
 import { renderApp } from "../test/renderApp.tsx";
 
 const composer = () => screen.getByRole("textbox", { name: "Message" });
@@ -78,12 +79,31 @@ describe("ChatPanel", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
+  it("empty_discovery_chat_puts_the_composer_above_one_row_per_example", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    const examples = screen.getByRole("list", { name: "Example questions" });
+    expect(within(examples).getAllByRole("button")).toHaveLength(5);
+    expect(composer().compareDocumentPosition(examples) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.type(composer(), "Where should we go in December?{Enter}");
+    await waitFor(() => expect(screen.queryByRole("list", { name: "Example questions" })).not.toBeInTheDocument());
+  });
+
+  it("shows_thinking_until_the_first_token_arrives", async () => {
+    mockDb.tokenGapMs = 200;
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.type(composer(), "Is December cold in Hà Nội?{Enter}");
+    expect(await screen.findByText("Thinking...")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Thinking...")).not.toBeInTheDocument(), { timeout: 2000 });
+  });
+
   it("empty_chat_shows_welcome_and_example_sends_it", async () => {
     const { user } = renderApp("/chat");
     expect(await screen.findByRole("heading", { name: "Where would you like to go?" })).toBeInTheDocument();
     expect(screen.getByText(/Results are for reference only/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "A long weekend near Hồ Chí Minh City with kids" }));
-    await waitFor(() => expect(mockDb.messages.some((m) => m.content === "A long weekend near Hồ Chí Minh City with kids")).toBe(true));
+    await user.click(screen.getByRole("button", { name: "How much is a Bà Nà Hills ticket right now?" }));
+    await waitFor(() => expect(mockDb.messages.some((m) => m.content === "How much is a Bà Nà Hills ticket right now?")).toBe(true));
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Where would you like to go?" })).not.toBeInTheDocument());
   });
 
@@ -345,6 +365,35 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("button", { name: "Suggest now" })).not.toBeInTheDocument();
   });
 
+  it("hotel_example_card_asks_for_the_stay_dates", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.click(screen.getByRole("button", { name: /4-star hotel in Hai Phong/ }));
+    expect(await screen.findByText("Which dates do you want to stay?")).toBeInTheDocument();
+  });
+
+  it("flight_example_asks_for_the_travel_dates", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.click(screen.getByRole("button", { name: /flight from Hà Nội to Đà Nẵng/ }));
+    expect(await screen.findByLabelText("Depart")).toBeInTheDocument();
+  });
+
+  it("plan_example_opens_the_trip_form_in_the_chat", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.click(screen.getByRole("button", { name: /3-day trip to Đà Lạt/ }));
+    expect(await screen.findByRole("button", { name: "Create plan" })).toBeInTheDocument();
+  });
+
+  it("open_ended_example_card_opens_the_questionnaire_at_the_first_question", async () => {
+    const { user } = renderApp("/chat");
+    await screen.findByRole("heading", { name: "Where would you like to go?" });
+    await user.click(screen.getByRole("button", { name: /don't know where to go yet/ }));
+    expect(await screen.findByText("Question 1 of 6")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "How do you want this trip to feel?" })).toBeInTheDocument();
+  });
+
   it("dates_sent_on_a_card_closed_in_another_tab_say_so_and_show_it_closed", async () => {
     const { user } = renderApp("/chat");
     await screen.findByRole("heading", { name: "Where would you like to go?" });
@@ -490,5 +539,190 @@ describe("ChatPanel", () => {
     expect(picker).toHaveAttribute("title", "Coming soon");
     await user.click(picker);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});
+
+const CITY = "Thành phố Hồ Chí Minh";
+
+// Take the origin out of the seeded conversation's draft
+function dropDraftOrigin() {
+  const { origin: _, ...rest } = seeded().request_draft ?? {};
+  seeded().request_draft = rest;
+}
+
+// Wait until the location chip shows the mock city, so the page knows it
+const waitForCity = () => screen.findAllByRole("status", { name: "Your location" });
+
+// Open the questionnaire and skip to question 4, the starting point
+async function openOriginStep(user: ReturnType<typeof renderApp>["user"]) {
+  const card = within(await openQuestionnaire(user));
+  for (const heading of ["How many people are going?", "About how much per person?", "Where are you starting from?"]) {
+    await user.click(card.getByRole("button", { name: "Skip this question" }));
+    await card.findByRole("heading", { name: heading });
+  }
+  return card;
+}
+
+describe("ChatPanel with the visitor's location", () => {
+  it("sends_default_origin_when_the_location_is_known", async () => {
+    fakeIpLocation("allow");
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    await waitForCity();
+    const watch = watchChatBodies();
+    await user.type(composer(), "Is December cold?{Enter}");
+    await waitFor(() => expect(watch.bodies.at(-1)).toMatchObject({ default_origin: CITY }));
+    watch.stop();
+  });
+
+  it("omits_default_origin_when_the_location_is_unknown", async () => {
+    fakeIpLocation("deny");
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    await screen.findByText(/three places that fit a cool/);
+    const watch = watchChatBodies();
+    await user.type(composer(), "Is December cold?{Enter}");
+    await waitFor(() => expect(watch.bodies).toHaveLength(1));
+    expect(watch.bodies[0]).not.toHaveProperty("default_origin");
+    watch.stop();
+  });
+
+  it("flight_dates_card_prefills_the_draft_origin_over_the_current_city", async () => {
+    fakeIpLocation("allow");
+    seeded().request_draft = { ...seeded().request_draft, origin: "Cần Thơ" };
+    addMessage("booking_search", { kind: "flight", status: "need_dates", query: "flights to Da Nang" }, "When do you want to travel?");
+    renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    await waitForCity();
+    expect(await screen.findByLabelText("Starting from")).toHaveValue("Cần Thơ");
+  });
+
+  it("flight_dates_card_shows_the_city_once_it_arrives_and_sends_no_untouched_origin", async () => {
+    fakeIpLocation("allow", 300);
+    dropDraftOrigin();
+    addMessage("booking_search", { kind: "flight", status: "need_dates", query: "flights to Da Nang" }, "When do you want to travel?");
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    const field = await screen.findByLabelText("Starting from");
+    expect(field).toHaveValue("Hà Nội");
+    await waitForCity();
+    expect(field).toHaveValue(CITY);
+    await user.type(screen.getByLabelText("Depart"), addDays(todayInVietnam(), 10));
+    const watch = watchChatBodies();
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(watch.bodies).toHaveLength(1));
+    expect(watch.bodies[0]).not.toHaveProperty("origin");
+    expect(watch.bodies[0]).toMatchObject({ default_origin: CITY });
+    watch.stop();
+  });
+
+  it("flight_dates_card_sends_an_origin_the_visitor_typed", async () => {
+    addMessage("booking_search", { kind: "flight", status: "need_dates", query: "flights to Da Nang" }, "When do you want to travel?");
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    const field = await screen.findByLabelText("Starting from");
+    await user.clear(field);
+    await user.type(field, "Huế");
+    await user.type(screen.getByLabelText("Depart"), addDays(todayInVietnam(), 10));
+    const watch = watchChatBodies();
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(watch.bodies).toHaveLength(1));
+    expect(watch.bodies[0]).toMatchObject({ origin: "Huế" });
+    watch.stop();
+  });
+
+  it("flight_dates_card_without_draft_origin_prefills_the_current_city", async () => {
+    fakeIpLocation("allow");
+    dropDraftOrigin();
+    addMessage("booking_search", { kind: "flight", status: "need_dates", query: "flights to Da Nang" }, "When do you want to travel?");
+    renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    await waitForCity();
+    expect(await screen.findByLabelText("Starting from")).toHaveValue(CITY);
+  });
+
+  it("flight_dates_card_without_any_origin_prefills_hanoi", async () => {
+    dropDraftOrigin();
+    addMessage("booking_search", { kind: "flight", status: "need_dates", query: "flights to Da Nang" }, "When do you want to travel?");
+    renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    expect(await screen.findByLabelText("Starting from")).toHaveValue("Hà Nội");
+  });
+
+  it("new_trip_form_opened_before_the_location_shows_the_city_when_it_arrives", async () => {
+    fakeIpLocation("allow", 300);
+    const { user } = renderApp("/");
+    await user.click(await screen.findByRole("button", { name: "New trip" }));
+    const field = within(await screen.findByRole("dialog", { name: "Plan a new trip" })).getByLabelText("Starting from");
+    expect(field).toHaveValue("Hà Nội");
+    await waitFor(() => expect(field).toHaveValue(CITY));
+  });
+
+  it("new_trip_form_keeps_an_origin_the_visitor_typed_when_the_city_arrives", async () => {
+    fakeIpLocation("allow", 300);
+    const { user } = renderApp("/");
+    await user.click(await screen.findByRole("button", { name: "New trip" }));
+    const field = within(await screen.findByRole("dialog", { name: "Plan a new trip" })).getByLabelText("Starting from");
+    await user.clear(field);
+    await user.type(field, "Huế");
+    await waitForCity();
+    expect(field).toHaveValue("Huế");
+  });
+
+  it("get_ideas_from_the_new_trip_form_leaves_an_untouched_origin_out_of_the_draft", async () => {
+    fakeIpLocation("allow");
+    const created: Record<string, unknown>[] = [];
+    server.events.on("request:start", ({ request }) => {
+      if (request.method === "POST" && new URL(request.url).pathname.endsWith("/conversations")) {
+        void request.clone().json().then((body) => created.push(body as Record<string, unknown>));
+      }
+    });
+    const { user } = renderApp("/");
+    await waitForCity();
+    await user.click(screen.getByRole("button", { name: "New trip" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Plan a new trip" }));
+    await user.click(dialog.getByRole("button", { name: /Get ideas/ }));
+    await waitFor(() => expect(created).toHaveLength(1));
+    expect(created[0]?.draft).not.toHaveProperty("origin");
+    server.events.removeAllListeners();
+  });
+
+  it("asks_for_the_location_once_even_after_a_failure", async () => {
+    fakeIpLocation("allow");
+    let calls = 0;
+    server.use(
+      http.get(apiUrl("/weather/current"), () => {
+        calls += 1;
+        return HttpResponse.json({ success: false, error: { code: "unavailable", message: "x" } }, { status: 503 });
+      }),
+    );
+    const { user } = renderApp(`/chat/${SEED_CONVERSATION_ID}`);
+    await screen.findByText(/three places that fit a cool/);
+    await user.click(screen.getAllByRole("link", { name: "My trips" })[0] as HTMLElement);
+    await user.click(await screen.findByRole("button", { name: "New trip" }));
+    await screen.findByRole("dialog", { name: "Plan a new trip" });
+    expect(calls).toBe(1);
+  });
+
+  it("new_trip_form_prefills_the_current_city", async () => {
+    fakeIpLocation("allow");
+    const { user } = renderApp("/");
+    await waitForCity();
+    await user.click(screen.getByRole("button", { name: "New trip" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Plan a new trip" }));
+    expect(dialog.getByLabelText("Starting from")).toHaveValue(CITY);
+  });
+
+  it("questionnaire_origin_step_shows_the_current_city_first_and_selected", async () => {
+    fakeIpLocation("allow");
+    const { user } = renderApp("/chat");
+    await waitForCity();
+    const card = await openOriginStep(user);
+    const [first] = card.getAllByRole("button", { pressed: true });
+    expect(first).toHaveAccessibleName(`${CITY} (where you are)`);
+    expect(card.getByRole("button", { name: "Hà Nội" })).toHaveAttribute("aria-pressed", "false");
+    await user.click(card.getByRole("button", { name: `${CITY} (where you are)` }));
+    await card.findByRole("heading", { name: "When do you want to go?" });
+    expect(savedCard()?.metadata).toMatchObject({ answers: { origin: CITY } });
+  });
+
+  it("questionnaire_origin_step_selects_hanoi_when_the_location_is_unknown", async () => {
+    const { user } = renderApp("/chat");
+    const card = await openOriginStep(user);
+    expect(card.queryByRole("button", { name: /where you are/ })).not.toBeInTheDocument();
+    expect(card.getByRole("button", { name: "Hà Nội" })).toHaveAttribute("aria-pressed", "true");
   });
 });

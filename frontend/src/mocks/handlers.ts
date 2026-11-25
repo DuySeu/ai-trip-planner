@@ -16,10 +16,11 @@ import {
   type User,
 } from "../api/api.types.ts";
 import { apiUrl } from "../api/client.ts";
+import { IP_LOCATION_URL } from "../api/location.ts";
 import { addDays, todayInVietnam, tripDays } from "../format/dates.ts";
 import { COUNTRY_CURRENCY } from "../format/money.ts";
 import { type ScriptFollowUp, scriptReply } from "./chatScript.ts";
-import { HEALTH_STATS, MODELS, PLACES, usageStats } from "./fixtures.ts";
+import { CURRENT_LOCATION, HEALTH_STATS, MODELS, PLACES, usageStats } from "./fixtures.ts";
 import { type MockMessage, type MockTrip, mockDb, REPLAN_HEAD_START_MS } from "./mockDb.ts";
 
 const MAX_NAME = 50;
@@ -29,6 +30,9 @@ const MAX_NOTES = 2000;
 const MAX_MESSAGE = 4000;
 const MAX_TITLE = 80;
 const MAX_PLACES = 10;
+const MAX_PLACE = 200;
+// The origin when the visitor's location is unknown (src/domain/questionnaire.py DEFAULT_ORIGIN)
+const DEFAULT_ORIGIN = "Hà Nội";
 const TITLE_LENGTH = 80;
 const DEFAULT_LIMIT = 50;
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -191,12 +195,15 @@ export const handlers = [
       booking_message_id?: string;
       dates?: Partial<HotelDates & FlightDates>;
       origin?: string;
+      default_origin?: string;
     };
     if (!body.conversation_id) return fail(422, "invalid_request", "conversation_id is required");
     const conversation = mockDb.conversations.find((c) => c.id === body.conversation_id);
     if (!conversation) return notFound();
     const content = (body.content ?? "").trim();
     if (content.length < 1 || content.length > MAX_MESSAGE) return fail(422, "invalid_request", "Message must be 1 to 4000 characters");
+    const defaultOrigin = body.default_origin === undefined ? DEFAULT_ORIGIN : body.default_origin.trim();
+    if (defaultOrigin.length < 1 || defaultOrigin.length > MAX_PLACE) return fail(422, "invalid_request", "default_origin must be 1 to 200 characters");
 
     // The trip on screen must be the user's, have a plan, and be at the revision the client saw
     let trip: MockTrip | null = null;
@@ -221,7 +228,7 @@ export const handlers = [
     conversation.updated_at = iso;
 
     // Apply the reply's trip change before streaming, like the backend does
-    const reply = scriptReply({ content, trip, conversation, followUp });
+    const reply = scriptReply({ content, trip, conversation, followUp, defaultOrigin });
     if (trip && reply.updatedTrip) {
       Object.assign(trip, reply.updatedTrip);
       if (reply.updatedTrip.status === "researching") mockDb.startJob(trip, REPLAN_HEAD_START_MS);
@@ -231,7 +238,11 @@ export const handlers = [
     // A card with an id is saved with its text before its event is sent, like the backend does
     const card = reply.events.find((e): e is Extract<ChatEvent, { type: "metadata" }> => e.type === "metadata");
     if (card?.data.message_id) {
-      if ("draft" in card.data.metadata) conversation.request_draft = card.data.metadata.draft;
+      if ("draft" in card.data.metadata) {
+        // The form shows the default origin; the saved draft keeps only an origin it already had
+        const { origin, ...rest } = card.data.metadata.draft;
+        conversation.request_draft = conversation.request_draft?.origin || origin !== defaultOrigin ? card.data.metadata.draft : rest;
+      }
       const text = reply.events.map((e) => (e.type === "token" ? e.data.text : "")).join("").trim();
       mockDb.messages.push({
         ...row(conversation.id, "assistant", text, reply.intent, card.data.metadata, iso),
@@ -259,6 +270,18 @@ export const handlers = [
     const q = fold(new URL(request.url).searchParams.get("q") ?? "");
     if (q.length < 2) return fail(422, "invalid_request", "Type at least 2 characters");
     return ok(PLACES.filter((p) => fold(p.name).startsWith(q)).slice(0, MAX_PLACES));
+  }),
+
+  // The IP lookup the browser makes itself; a test IP sits in a private range, so it has no position
+  http.get(IP_LOCATION_URL, () => HttpResponse.json({ success: false, message: "Reserved range" })),
+
+  // GET /weather/current - The visitor's city and its weather now; any valid point is Hồ Chí Minh City
+  http.get(apiUrl("/weather/current"), ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const lat = Number(params.get("lat") ?? NaN);
+    const lon = Number(params.get("lon") ?? NaN);
+    if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return fail(422, "invalid_request", "lat and lon are required");
+    return ok(CURRENT_LOCATION);
   }),
 
   // POST /trips - Create a trip and queue its generation
@@ -487,7 +510,6 @@ function checkFollowUp(
   }
   if (meta.kind === "flight" && end && end < start) return fail(422, "invalid_request", "The return is before the departure");
   const draft = conversation.request_draft ?? {};
-  if (meta.kind === "flight" && !body.origin && !draft.origin) return fail(422, "invalid_request", "origin is required");
   card.metadata = { ...meta, status: "done" };
   conversation.request_draft = {
     ...draft,

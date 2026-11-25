@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -16,6 +16,7 @@ from api.limits import RateLimiter, client_ip
 from core.exceptions import QuotaExhausted
 from core.settings import Settings
 from db.repositories import llm_calls, quota
+from research.current_location import LocationCache
 
 if TYPE_CHECKING:
     from models.model_router import ModelRouter
@@ -44,6 +45,8 @@ class AppDeps:
     search: WebSearch
     limiters: Limiters
     now: Callable[[], datetime]
+    # In memory only: the coordinates of visitors never reach the database
+    location_cache: LocationCache = field(default_factory=LocationCache)
 
 
 # The limiters for the configured per-IP numbers; a kind with no daily cap gets a day's worth

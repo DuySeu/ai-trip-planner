@@ -17,6 +17,7 @@ Minimum requirements a component must meet before it ships, written so they carr
 ### List
 
 - Conversations sort newest first under a small muted label. Only the list scrolls; the logo, primary action and footer stay fixed.
+- The footer, above a `--border` rule, is one row: the name's first letter in a 36px `--accent` circle, the name (truncated), and a settings icon button at the right (`SettingsMenu`). It opens a raised menu placed like the conversation menu (`useAnchoredMenu`: right of the button, flipping left or shifting up when there is no room) with four items: the Dashboard link first, the other UI language, the theme switch (labelled with the theme it switches to, "Dark" / "Light"), and "Switch name" with a log-out icon. Language and theme keep the menu open so the change is visible; Escape, a press outside, scroll or resize close it. The visitor's city and weather are not in the sidebar: from the desktop breakpoint [1024px] the location chip (`HeaderLocation` in `LocationBanner.tsx`, the weather chip look with a 16px `map-pin`, one line, truncated) sits at the right of the page header on HomePage (left of "New trip") and ChatPage (right of the conversation title); below it the chip sits at the right of the mobile top bar. It renders nothing (no gap left behind) while the location loads, when the IP lookup fails, or when the backend cannot name the city.
 - The list has no tabs and no separate "New chat" button: the one primary "start" action at the top of the sidebar always opens an empty chat.
 - Below the desktop breakpoint [1024px] the sidebar becomes a drawer over a dimmed backdrop and closes when a row is clicked.
 
@@ -76,6 +77,8 @@ Minimum requirements a component must meet before it ships, written so they carr
 - Switch between the two layouts with CSS grid template areas on the same elements, so the textarea never remounts and keeps focus and caret. Give every cell a name: a `.` empty cell can be minified into an invalid value, so use a named spacer cell instead.
 - Detect wrapping in the change handler (`scrollHeight` above the single-line height [44px]), not in an effect. Return to the pill only when the text is cleared, not when it shrinks back to one line, so the layout does not flicker while typing.
 - Width: on a full chat page the composer is centred at [50%] of the main area from [640px] and full width below that. In a side panel it is full width.
+- Empty full chat page: the single-line composer's centre sits on the middle of the panel (the header floats over the top meanwhile), the welcome title just above it and the example prompts under it as a list, one prompt per row at the composer's width. The first send removes the list and slides the composer down to the bottom [250ms, `transform` only, none under reduced motion]. Keep it the same element the whole time (only its container grows or not), so the textarea keeps focus.
+- Waiting for a reply: until the first token or card arrives, the reply shows a pulsing "Thinking..." line with a `sparkles` icon, then the streamed text with a cursor.
 - Hide secondary controls (the model picker) with a container query on the composer's own width [below 448px], not with a viewport breakpoint. The same component lives in a wide page and in a narrow side panel.
 
 ### Textarea
@@ -122,3 +125,5 @@ Minimum requirements a component must meet before it ships, written so they carr
 - The length limit message, with the send button disabled.
 - The disabled state shows its reason.
 - The empty chat shows the welcome panel, and an example prompt sends itself.
+- The empty full chat page puts the composer before the example list, one button per example, and the list goes on the first send.
+- "Thinking..." shows until the first token arrives.

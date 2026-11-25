@@ -121,6 +121,7 @@ class Rig:
         trip: TripRow | None = None,
         revision: int | None = None,
         follow_up: FollowUp | None = None,
+        default_origin: str | None = None,
     ) -> list[ChatEvent]:
         with self.pool.connection() as conn:
             turn = prepare_message(
@@ -131,6 +132,7 @@ class Rig:
                 revision,
                 follow_up=follow_up,
                 today=NOW.date(),
+                default_origin=default_origin,
             )
         return list(stream_reply(turn, self.deps))
 
@@ -233,6 +235,26 @@ def test_trip_without_plan_raises_conflict_before_streaming(db_pool, db_conn, us
     queued = create_trip(db_conn, user.id, DALAT_FIELDS, None)
     with db_pool.connection() as conn, pytest.raises(Conflict):
         prepare_message(conn, conversation.id, "hi", queued.id, None)
+
+
+def test_prepare_message_uses_hanoi_when_no_default_origin(db_pool, conversation):
+    with db_pool.connection() as conn:
+        turn = prepare_message(conn, conversation.id, "hi", None, None)
+    assert turn.default_origin == "Hà Nội"
+
+
+def test_prepare_message_keeps_sent_default_origin(db_pool, conversation):
+    with db_pool.connection() as conn:
+        turn = prepare_message(conn, conversation.id, "hi", None, None, default_origin="Đà Nẵng")
+    assert turn.default_origin == "Đà Nẵng"
+
+
+def test_default_origin_is_not_saved_into_draft(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
+    # The model writes the default back as the origin it searched from
+    rig = Rig(db_pool, [route("flight_search", "flights to Hue"), flight_answer("Đà Nẵng")])
+    rig.say(conversation.id, "Flights to Hue?", default_origin="Đà Nẵng")
+    assert get_conversation(db_conn, conversation.id).request_draft == DRAFT_DATES
 
 
 def test_edit_without_open_trip_asks_to_open_it(db_pool, db_conn, conversation):
@@ -636,7 +658,7 @@ def test_flight_question_searches_transport_sites_and_streams_flight_cards(
 
     assert (search.calls, search.tasks) == ([f"{task} 12/2026"], ["transport"])
     assert (
-        "depart 2026-12-20, return 2026-12-23, from Hà Nội"
+        "depart 2026-12-20, return 2026-12-23, known origin Hà Nội"
         in rig.provider.calls[1][0][0]["content"]
     )
     meta = events[-2].data["metadata"]
@@ -654,35 +676,109 @@ def test_flight_question_searches_transport_sites_and_streams_flight_cards(
     assert recent_messages(db_conn, conversation.id, 1)[-1].metadata == meta
 
 
-def test_flight_question_without_origin_asks_for_it(db_pool, db_conn, conversation):
+# A flight answer with no cards; origin is the one the model says it searched for
+def flight_answer(origin: str | None = None) -> str:
+    return json.dumps({"reply": "Ok.", "cards": [], "origin": origin})
+
+
+def test_flight_question_without_origin_searches_from_default_origin(
+    db_pool, db_conn, conversation
+):
     save_draft(db_conn, conversation.id, DRAFT_DATES)
     rig = Rig(
-        db_pool, [route("flight_search", "flights to Da Nang")], FakeSearch(default=FLIGHT_HITS)
+        db_pool,
+        [route("flight_search", "flights to Da Nang"), flight_answer()],
+        FakeSearch(default=FLIGHT_HITS),
     )
     events = rig.say(conversation.id, "Flights to Da Nang?")
-    assert rig.search.calls == []
-    assert spoken(events) == "When do you want to travel?"
-    assert events[-2].data["metadata"] == {
-        "kind": "flight",
-        "status": "need_dates",
-        "query": "flights to Da Nang",
+    assert rig.search.calls == ["flights to Da Nang 12/2026"]
+    assert "known origin Hà Nội" in rig.provider.calls[1][0][0]["content"]
+    assert events[-2].data["metadata"]["status"] == "results"
+    assert "origin" not in get_conversation(db_conn, conversation.id).request_draft
+
+
+def test_flight_question_uses_sent_default_origin(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
+    rig = Rig(db_pool, [route("flight_search", "flights to Hue"), flight_answer()])
+    rig.say(conversation.id, "Flights to Hue?", default_origin="Đà Nẵng")
+    assert "known origin Đà Nẵng" in rig.provider.calls[1][0][0]["content"]
+
+
+def test_flight_draft_origin_wins_over_default_origin(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, {**DRAFT_DATES, "origin": "Huế"})
+    rig = Rig(db_pool, [route("flight_search", "flights to Hanoi"), flight_answer()])
+    rig.say(conversation.id, "Flights to Hanoi?", default_origin="Đà Nẵng")
+    content = rig.provider.calls[1][0][0]["content"]
+    assert "known origin Huế" in content
+    assert "Đà Nẵng" not in content
+
+
+def test_flight_origin_named_in_message_is_saved_to_draft(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
+    rig = Rig(db_pool, [route("flight_search", "vé Huế Đà Nẵng"), flight_answer("Huế")])
+    rig.say(conversation.id, "vé từ Huế đi Đà Nẵng")
+    assert get_conversation(db_conn, conversation.id).request_draft == {
+        **DRAFT_DATES,
+        "origin": "Huế",
     }
 
 
-def test_flight_follow_up_needs_an_origin_and_takes_it_into_the_draft(
+@pytest.mark.parametrize("answered", [" hà nội ", "Hà Nội", "", None])
+def test_flight_origin_equal_to_given_one_or_empty_is_not_saved(
+    db_pool, db_conn, conversation, answered
+):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
+    rig = Rig(db_pool, [route("flight_search", "flights to Da Nang"), flight_answer(answered)])
+    rig.say(conversation.id, "Flights to Da Nang?")
+    assert get_conversation(db_conn, conversation.id).request_draft == DRAFT_DATES
+
+
+@pytest.mark.parametrize(
+    ("message", "answered"),
+    [("Flights to Da Nang?", "Hanoi"), ("Vé đi Đà Nẵng?", "Thành phố Hồ Chí Minh")],
+)
+def test_flight_origin_not_in_the_message_is_not_saved(
+    db_pool, db_conn, conversation, message, answered
+):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
+    rig = Rig(db_pool, [route("flight_search", "flights to Da Nang"), flight_answer(answered)])
+    rig.say(conversation.id, message, default_origin="TP. Hồ Chí Minh")
+    assert get_conversation(db_conn, conversation.id).request_draft == DRAFT_DATES
+
+
+def test_flight_origin_named_without_accents_is_saved(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, DRAFT_DATES)
+    rig = Rig(db_pool, [route("flight_search", "flights Hue Da Nang"), flight_answer("Huế")])
+    rig.say(conversation.id, "flights from HUE to Da Nang")
+    assert get_conversation(db_conn, conversation.id).request_draft["origin"] == "Huế"
+
+
+def test_flight_follow_up_without_origin_uses_default_and_saves_none(
     db_pool, db_conn, conversation
 ):
     card = need_dates(db_conn, conversation, "flight", "flights to Da Nang")
     dates = BookingDates(depart=date(2026, 12, 20))
-    rig = Rig(db_pool, [json.dumps({"reply": "Ok.", "cards": []})], FakeSearch(default=[]))
-    with pytest.raises(InvalidInput):
-        rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates))
-    rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates, "Hà Nội"))
+    rig = Rig(db_pool, [flight_answer()], FakeSearch(default=[]))
+    rig.say(
+        conversation.id,
+        "Search",
+        follow_up=FollowUp(card.id, "booking", dates),
+        default_origin="Đà Nẵng",
+    )
+    assert get_conversation(db_conn, conversation.id).request_draft == {"start_date": "2026-12-20"}
+    assert "known origin Đà Nẵng" in rig.provider.calls[0][0][0]["content"]
+
+
+def test_flight_follow_up_takes_the_card_origin_into_the_draft(db_pool, db_conn, conversation):
+    card = need_dates(db_conn, conversation, "flight", "flights to Da Nang")
+    dates = BookingDates(depart=date(2026, 12, 20))
+    rig = Rig(db_pool, [flight_answer()], FakeSearch(default=[]))
+    rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates, "Huế"))
     assert get_conversation(db_conn, conversation.id).request_draft == {
         "start_date": "2026-12-20",
-        "origin": "Hà Nội",
+        "origin": "Huế",
     }
-    assert "from Hà Nội" in rig.provider.calls[0][0][0]["content"]
+    assert "known origin Huế" in rig.provider.calls[0][0][0]["content"]
 
 
 def test_router_clarification_is_advice_with_clarify_flag(db_pool, db_conn, conversation):
@@ -870,3 +966,22 @@ def test_card_follow_up_skips_the_guard(db_pool, db_conn, conversation):
         conversation.id, "Search with these dates", follow_up=FollowUp(card.id, "booking", dates)
     )
     assert len(rig.provider.calls) == 1  # the hotel answer, no judge
+
+
+def test_travel_advice_prompt_has_current_city(db_pool, conversation):
+    rig = Rig(db_pool, [route("advice"), "Đi Hội An nhé."])
+    rig.say(conversation.id, "Cuối tuần đi đâu gần?", default_origin="Đà Nẵng")
+    assert (
+        "<visitor>\nstarting_point: Đà Nẵng\n</visitor>" in rig.provider.calls[1][0][0]["content"]
+    )
+
+
+def test_travel_advice_prefers_the_draft_origin_over_the_current_city(
+    db_pool, db_conn, conversation
+):
+    save_draft(db_conn, conversation.id, {"origin": "Huế"})
+    rig = Rig(db_pool, [route("advice"), "Đi Hội An nhé."])
+    rig.say(conversation.id, "Đi Phú Quốc thế nào?", default_origin="Đà Nẵng")
+    content = rig.provider.calls[1][0][0]["content"]
+    assert "<visitor>\nstarting_point: Huế\n</visitor>" in content
+    assert "Đà Nẵng" not in content

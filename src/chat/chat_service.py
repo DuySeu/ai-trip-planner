@@ -33,6 +33,7 @@ from core.settings import Settings
 from db.repositories import conversations, messages, trips
 from db.repositories.messages import MessageRow
 from domain.booking import BookingDates, BookingKind, dates_errors
+from domain.questionnaire import DEFAULT_ORIGIN
 from domain.trip_request import Language, today_in_vietnam
 from guardrail import Action
 from models.model_router import CallContext, ModelRouter
@@ -138,6 +139,9 @@ class ChatTurn:
     follow_up: FollowUp | None = None
     # The conversation's chosen chat model, tried first by the chat purposes
     chat_model: str | None = None
+    # The visitor's current city (or Hà Nội): the origin when the message, the trip and the
+    # draft name none. Never written to the draft
+    default_origin: str = DEFAULT_ORIGIN
 
 
 # The assistant reply as it builds up: its intent, its metadata and the text streamed so far
@@ -158,6 +162,7 @@ def prepare_message(
     plan_revision: int | None,
     follow_up: FollowUp | None = None,
     today: date | None = None,
+    default_origin: str | None = None,
 ) -> ChatTurn:
     conversation = conversations.get_conversation(conn, conversation_id)
     trip = None
@@ -170,11 +175,8 @@ def prepare_message(
         if trip.plan is None:
             raise Conflict(f"trip {trip_id} has no plan yet")
     if follow_up is not None:
-        origin = (
-            trip.origin if trip is not None else (conversation.request_draft or {}).get("origin")
-        )
         _check_follow_up(
-            conn, conversation_id, follow_up, origin, today or today_in_vietnam(datetime.now(UTC))
+            conn, conversation_id, follow_up, today or today_in_vietnam(datetime.now(UTC))
         )
 
     message = messages.add_message(conn, conversation_id, "user", content)
@@ -191,6 +193,7 @@ def prepare_message(
         plan_revision,
         follow_up,
         conversation.chat_model,
+        default_origin or DEFAULT_ORIGIN,
     )
 
 
@@ -200,7 +203,6 @@ def _check_follow_up(
     conn: Connection[Any],
     conversation_id: UUID,
     follow_up: FollowUp,
-    known_origin: str | None,
     today: date,
 ) -> None:
     card = messages.get_message(conn, follow_up.message_id, lock=True)
@@ -217,8 +219,6 @@ def _check_follow_up(
     if card.intent != "booking_search" or meta.get("status") != "need_dates":
         raise Conflict(f"message {card.id} is not waiting for dates")
     errors = dates_errors(meta["kind"], follow_up.dates or BookingDates(), today)
-    if meta["kind"] == "flight" and not (follow_up.origin or known_origin):
-        errors.append("origin is required")
     if errors:
         raise InvalidInput("; ".join(errors))
     done = {**meta, "status": "done"}

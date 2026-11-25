@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { apiUrl } from "../api/client.ts";
 import { MINH_ID } from "../mocks/fixtures.ts";
 import { server } from "../mocks/server.ts";
+import { fakeIpLocation } from "../test/ipLocation.ts";
 import { renderApp } from "../test/renderApp.tsx";
 
 // The trip cards, in screen order
@@ -13,6 +14,14 @@ async function tripCards() {
 }
 
 describe("HomePage", () => {
+  it("location_chip_sits_in_the_page_header_not_the_sidebar", async () => {
+    fakeIpLocation("allow");
+    renderApp("/");
+    const header = screen.getByRole("heading", { level: 1 }).closest("header") as HTMLElement;
+    expect(await within(header).findByRole("status", { name: "Your location" })).toHaveTextContent("Thành phố Hồ Chí Minh");
+    expect(within(screen.getByRole("complementary")).queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("shows_seeded_trips_newest_first_with_status_badges", async () => {
     renderApp("/");
     const cards = await tripCards();

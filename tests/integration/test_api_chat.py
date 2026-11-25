@@ -530,3 +530,20 @@ def test_patch_cancel_on_a_questionnaire_conflicts(db_pool, db_conn, conversatio
         f"/conversations/{conversation.id}/messages/{card_row.id}", json={"status": "canceled"}
     )
     assert response.status_code == 409
+
+
+@pytest.mark.parametrize("default_origin", ["", "   ", "x" * 201])
+def test_chat_body_rejects_blank_or_too_long_default_origin(
+    db_pool, db_conn, conversation, default_origin
+):
+    client, _ = chat_client(db_pool, [])
+    response = client.post(
+        "/chat",
+        json={
+            "conversation_id": str(conversation.id),
+            "content": "hi",
+            "default_origin": default_origin,
+        },
+    )
+    assert response.status_code == 422
+    assert messages.recent_messages(db_conn, conversation.id, 5) == []

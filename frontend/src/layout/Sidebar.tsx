@@ -1,4 +1,4 @@
-import { Gauge, Lightbulb, Map as MapIcon, UserRound, X } from "lucide-react";
+import { Lightbulb, Map as MapIcon, X } from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink, useMatch, useNavigate } from "react-router";
 import type { Conversation } from "../api/api.types.ts";
@@ -9,7 +9,7 @@ import { useT } from "../i18n/LanguageProvider.tsx";
 import { clearSession, useSession } from "../session/session.ts";
 import { BUTTON, FIELD, FIELD_ERROR, INPUT, LABEL, SKELETON } from "../styles/recipes.ts";
 import { ConversationRow } from "./ConversationRow.tsx";
-import { Preferences } from "./Preferences.tsx";
+import { SettingsMenu } from "./SettingsMenu.tsx";
 
 const MAX_TITLE = 80;
 const ACTIVE = "bg-accent text-accent-foreground";
@@ -87,12 +87,6 @@ export function Sidebar({ onClose }: Props) {
               {t("nav.myTrips")}
             </NavLink>
           </li>
-          <li>
-            <NavLink to="/dashboard" className={({ isActive }) => `${NAV_LINK} ${isActive ? ACTIVE : ""}`} onClick={onClose}>
-              <Gauge size={16} strokeWidth={1.75} aria-hidden="true" />
-              {t("nav.dashboard")}
-            </NavLink>
-          </li>
         </ul>
       </nav>
 
@@ -135,24 +129,24 @@ export function Sidebar({ onClose }: Props) {
         </div>
       </section>
 
-      <div className="flex flex-wrap items-center justify-between gap-1 border-t border-border pt-3">
+      <div className="flex items-center gap-2 border-t border-border px-2 pt-3">
         {session && (
-          <details className="relative min-w-0">
-            <summary className={`${BUTTON.ghost} max-w-44 list-none [&::-webkit-details-marker]:hidden`}>
-              <UserRound size={20} strokeWidth={1.75} aria-hidden="true" />
-              <span className="truncate" aria-hidden="true">
-                {session.name}
-              </span>
+          <>
+            <span
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-accent font-semibold text-accent-foreground"
+              aria-hidden="true"
+            >
+              {Array.from(session.name)[0]?.toLocaleUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-medium" title={session.name}>
               <span className="sr-only">{t("nav.account", { name: session.name })}</span>
-            </summary>
-            <div className="absolute bottom-[calc(100%+8px)] left-0 z-10 origin-bottom-left animate-pop-in rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-raised">
-              <button type="button" className={BUTTON.ghost} onClick={handleSwitchName}>
-                {t("nav.switchName")}
-              </button>
-            </div>
-          </details>
+              <span aria-hidden="true">{session.name}</span>
+            </span>
+          </>
         )}
-        <Preferences />
+        <div className="ml-auto">
+          <SettingsMenu onNavigate={onClose} onSwitchName={handleSwitchName} />
+        </div>
       </div>
 
       <ConfirmDialog

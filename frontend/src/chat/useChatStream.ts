@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FlightDates, HotelDates, MessageMetadata } from "../api/api.types.ts";
 import { ApiError } from "../api/client.ts";
 import { conversationKeys, sendMessage } from "../api/conversations.ts";
+import { useCurrentLocation } from "../api/location.ts";
 import { parseSse } from "../api/parseSse.ts";
 import { tripKeys } from "../api/trips.ts";
 
@@ -32,6 +33,7 @@ interface Options {
 // Send chat messages and follow the streamed reply; shared by the trip page and the chat page
 export function useChatStream(conversationId: string | null, { tripId, planRevision, ensureConversation }: Options) {
   const queryClient = useQueryClient();
+  const city = useCurrentLocation().data?.city;
   const [state, setState] = useState<ChatState>({ kind: "idle", hasUpdatedPlan: false });
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -55,7 +57,7 @@ export function useChatStream(conversationId: string | null, { tripId, planRevis
       id ??= await ensureConversation();
       const body = await sendMessage(
         id,
-        { content, trip_id: tripId, plan_revision: tripId ? planRevision : null, ...followUp },
+        { content, trip_id: tripId, plan_revision: tripId ? planRevision : null, ...(city ? { default_origin: city } : {}), ...followUp },
         signal,
       );
 

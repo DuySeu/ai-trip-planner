@@ -158,6 +158,8 @@ export async function sendMessage(
     booking_message_id?: string;
     dates?: HotelDates | FlightDates;
     origin?: string;
+    // The visitor's current city; left out when unknown, and the backend then uses Hà Nội
+    default_origin?: string;
   },
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {

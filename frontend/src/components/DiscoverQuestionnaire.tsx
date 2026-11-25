@@ -2,6 +2,7 @@ import { Check } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import type { QuestionnaireMeta } from "../api/api.types.ts";
 import { type AnswerBody, useAnswerQuestion } from "../api/conversations.ts";
+import { useCurrentLocation } from "../api/location.ts";
 import { formatMoney } from "../format/money.ts";
 import { errorKey } from "../i18n/errorKey.ts";
 import { type MessageKey, type Translate, useLanguage, useT } from "../i18n/LanguageProvider.tsx";
@@ -19,6 +20,9 @@ const OPTIONS = [
 ] as const;
 type OptionId = (typeof OPTIONS)[number][number];
 const TOTAL = OPTIONS.length;
+// The starting-point step: the visitor's current city comes first, else Hà Nội is preselected
+const ORIGIN_STEP = 4;
+const FALLBACK_ORIGIN_ID: OptionId = "hanoi";
 // What the visitor may type instead of a button, by step
 const TYPED: Record<number, { field: string; type: "number" | "text" | "date"; label: MessageKey }> = {
   2: { field: "travelers", type: "number", label: "questionnaire.other2" },
@@ -51,8 +55,15 @@ export function DiscoverQuestionnaire({ conversationId, messageId, meta, isBusy,
   const [typed, setTyped] = useState("");
   const [notes, setNotes] = useState(meta.answers.notes ?? "");
   const answer = useAnswerQuestion();
+  const city = useCurrentLocation().data?.city;
   const isDisabled = isBusy || answer.isPending;
   const chosen = meta.choices[String(step)];
+  // On the origin step with no button chosen yet: the current city (or a typed answer equal to it)
+  // shows as selected, else Hà Nội does; a press still saves it
+  const isOriginOpen = step === ORIGIN_STEP && !chosen;
+  const typedOrigin = meta.answers.origin;
+  const isCityOn = isOriginOpen && city !== undefined && (typedOrigin ?? city) === city;
+  const preselected = isOriginOpen && city === undefined && !typedOrigin ? FALLBACK_ORIGIN_ID : null;
 
   // Save one answer, then move on; the last step goes straight to the suggestions
   const save = (body: AnswerBody) =>
@@ -136,19 +147,34 @@ export function DiscoverQuestionnaire({ conversationId, messageId, meta, isBusy,
         </fieldset>
       ) : (
         <div className="flex flex-wrap gap-2">
-          {OPTIONS[step - 1]?.map((id: OptionId) => (
+          {step === ORIGIN_STEP && city !== undefined && (
             <button
-              key={id}
               type="button"
-              className={`${CHIP} ${chosen === id ? CHIP_ON : ""}`}
-              aria-pressed={chosen === id}
+              className={`${CHIP} ${isCityOn ? CHIP_ON : ""}`}
+              aria-pressed={isCityOn}
               disabled={isDisabled}
-              onClick={() => save({ step, choice: id, answers: step === TOTAL ? notesAnswer() : {} })}
+              onClick={() => save({ step, choice: null, answers: { origin: city } })}
             >
-              {chosen === id && <Check size={16} strokeWidth={1.75} aria-hidden="true" />}
-              {t(`questionnaire.option.${id}`)}
+              {isCityOn && <Check size={16} strokeWidth={1.75} aria-hidden="true" />}
+              {t("questionnaire.currentCity", { city })}
             </button>
-          ))}
+          )}
+          {OPTIONS[step - 1]?.map((id: OptionId) => {
+            const isOn = chosen === id || preselected === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`${CHIP} ${isOn ? CHIP_ON : ""}`}
+                aria-pressed={isOn}
+                disabled={isDisabled}
+                onClick={() => save({ step, choice: id, answers: step === TOTAL ? notesAnswer() : {} })}
+              >
+                {isOn && <Check size={16} strokeWidth={1.75} aria-hidden="true" />}
+                {t(`questionnaire.option.${id}`)}
+              </button>
+            );
+          })}
         </div>
       )}
 

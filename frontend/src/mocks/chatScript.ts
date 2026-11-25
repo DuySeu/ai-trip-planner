@@ -14,10 +14,10 @@ import { addDays, todayInVietnam } from "../format/dates.ts";
 import { FLIGHT_CARDS, HOTEL_CARDS, SUGGESTION_CARDS } from "./fixtures.ts";
 import { mockDb } from "./mockDb.ts";
 
-const CREATE_TRIP = /plan trip|tạo plan/i;
+const CREATE_TRIP = /plan trip|plan a|tạo plan|lên lịch trình/i;
 const DISCOVER = /where|ideas|gợi ý|đi đâu/i;
 const HOTEL = /hotel|khách sạn/i;
-const FLIGHT = /flight|ticket|vé|máy bay/i;
+const FLIGHT = /flight|máy bay/i;
 const EDIT = /change|switch|cheaper|đổi|thay/i;
 const REPLAN = /date|ngày|people|người/i;
 const VIETNAMESE = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i;
@@ -30,6 +30,8 @@ interface Input {
   trip: Trip | null;
   conversation: Conversation;
   followUp?: ScriptFollowUp | null;
+  // The visitor's current city, or Hà Nội; tickets start there when nothing else names an origin
+  defaultOrigin: string;
 }
 
 interface Reply {
@@ -39,7 +41,7 @@ interface Reply {
 }
 
 // The canned reply to a chat message; the first matching rule wins
-export function scriptReply({ content, trip, conversation, followUp = null }: Input): Reply {
+export function scriptReply({ content, trip, conversation, followUp = null, defaultOrigin }: Input): Reply {
   const isVi = VIETNAMESE.test(content);
   const say = (en: string, vi: string): ChatEvent[] =>
     (isVi ? vi : en).split(/(?<= )/).map((text) => ({ type: "token", data: { text } }));
@@ -84,7 +86,7 @@ export function scriptReply({ content, trip, conversation, followUp = null }: In
   if (trip === null && CREATE_TRIP.test(content)) {
     const draft: RequestDraft = {
       destination: { name: "Hải Phòng", country_code: "VN", lat: 20.86, lon: 106.68 },
-      origin: "Hà Nội",
+      origin: defaultOrigin,
       start_date: addDays(todayInVietnam(mockDb.now()), 30),
       length_days: 3,
       travelers: 2,
@@ -109,9 +111,8 @@ export function scriptReply({ content, trip, conversation, followUp = null }: In
     const draft = conversation.request_draft ?? {};
     const start = trip?.start_date ?? draft.start_date ?? null;
     const end = trip?.end_date ?? draft.end_date ?? null;
-    const origin = trip?.origin ?? draft.origin ?? null;
     if (kind === "hotel" && start && end) return results(kind, content, { check_in: start, check_out: end });
-    if (kind === "flight" && start && origin) return results(kind, content, { depart: start, return: end });
+    if (kind === "flight" && start) return results(kind, content, { depart: start, return: end });
     return {
       intent: "booking_search",
       updatedTrip: null,

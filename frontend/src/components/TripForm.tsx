@@ -43,10 +43,13 @@ export function TripForm({
 }: Props) {
   const t = useT();
   const { lang } = useLanguage();
-  const [values, setValues] = useState(initialValues);
+  const [edited, setValues] = useState(initialValues);
+  // Until the visitor edits it, the origin follows initialValues (the current city may arrive late)
+  const [isOriginEdited, setIsOriginEdited] = useState(false);
   const [hasTried, setHasTried] = useState(false);
   const [hintStyle, setHintStyle] = useState<TravelStyle | null>(null);
 
+  const values = isOriginEdited ? edited : { ...edited, origin: initialValues.origin };
   const today = todayInVietnam();
   const errors = hasTried ? validateTripForm(values, today) : initialErrors;
   const country = values.destination?.country_code;
@@ -134,7 +137,10 @@ export function TripForm({
           value={values.origin}
           placeholder={t("form.originPlaceholder")}
           maxLength={200}
-          onChange={(event) => set("origin", event.target.value)}
+          onChange={(event) => {
+            setIsOriginEdited(true);
+            set("origin", event.target.value);
+          }}
         />
       </div>
 

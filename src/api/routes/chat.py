@@ -201,6 +201,7 @@ def send_message(body: SendMessageBody, deps: Deps, chat_deps: ChatDepsDep) -> S
             body.plan_revision,
             follow_up,
             today_in_vietnam(deps.now()),
+            body.default_origin,
         )
         conversations.set_title_if_missing(conn, conversation_id, body.content[:MAX_TITLE_CHARS])
     return StreamingResponse(

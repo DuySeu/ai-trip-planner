@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router";
 import { useConversation } from "../api/conversations.ts";
 import { ChatPanel } from "../components/ChatPanel.tsx";
 import { useT } from "../i18n/LanguageProvider.tsx";
+import { HeaderLocation } from "../layout/LocationBanner.tsx";
 import { TITLE } from "../styles/recipes.ts";
 
 // A conversation filling the whole area right of the sidebar; /chat starts an empty one, created on the first send
@@ -25,7 +26,12 @@ export function ChatPage() {
       <div className="min-h-0 flex-1">
         <ChatPanel
           key={panelKey}
-          header={<h1 className={`${TITLE.section} min-w-0 wrap-anywhere`}>{conversation.data?.title ?? t("chat.pageTitle")}</h1>}
+          header={
+            <>
+              <h1 className={`${TITLE.section} min-w-0 wrap-anywhere`}>{conversation.data?.title ?? t("chat.pageTitle")}</h1>
+              <HeaderLocation className="ml-auto pl-4" />
+            </>
+          }
           conversationId={conversationId}
           trip={null}
           disabledReason={null}

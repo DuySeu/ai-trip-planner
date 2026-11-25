@@ -11,6 +11,7 @@ import { formatMoney } from "../format/money.ts";
 import { errorKey } from "../i18n/errorKey.ts";
 import { useLanguage, useT } from "../i18n/LanguageProvider.tsx";
 import { useSession } from "../session/session.ts";
+import { HeaderLocation } from "../layout/LocationBanner.tsx";
 import { BADGE, BUTTON, CARD, SKELETON, TITLE } from "../styles/recipes.ts";
 
 const SKELETON_CARDS = ["a", "b", "c"];
@@ -52,7 +53,10 @@ export function HomePage() {
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className={TITLE.page}>{t("home.title")}</h1>
-        {trips.data && trips.data.length > 0 && newTripButton}
+        <div className="flex min-w-0 items-center gap-3">
+          <HeaderLocation />
+          {trips.data && trips.data.length > 0 && newTripButton}
+        </div>
       </header>
 
       {trips.isPending ? (

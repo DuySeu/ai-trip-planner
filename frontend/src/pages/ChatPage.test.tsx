@@ -1,15 +1,24 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { mockDb } from "../mocks/mockDb.ts";
+import { fakeIpLocation } from "../test/ipLocation.ts";
 import { renderApp } from "../test/renderApp.tsx";
 
 const composer = () => screen.getByRole("textbox", { name: "Message" });
 
 describe("ChatPage", () => {
+  it("location_chip_sits_in_the_page_header_not_the_sidebar", async () => {
+    fakeIpLocation("allow");
+    renderApp("/chat");
+    const header = screen.getByRole("heading", { level: 1 }).closest("header") as HTMLElement;
+    expect(await within(header).findByRole("status", { name: "Your location" })).toHaveTextContent("Thành phố Hồ Chí Minh");
+    expect(within(screen.getByRole("complementary")).queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("chat_route_without_id_shows_the_discovery_prompt", () => {
     renderApp("/chat");
     expect(screen.getByRole("heading", { level: 1, name: "Get ideas" })).toBeInTheDocument();
-    expect(screen.getByText("Tell me roughly when, with whom and your budget")).toBeInTheDocument();
+    expect(screen.getByText("Let's come up with ideas for your trip")).toBeInTheDocument();
   });
 
   it("chat_route_without_id_creates_conversation_on_first_send_and_updates_url", async () => {
@@ -40,7 +49,7 @@ describe("ChatPage", () => {
     const { user } = renderApp(`/chat/${mockDb.conversations[0]?.id}`);
     await screen.findByText(/three places that fit a cool/);
     await user.click(screen.getByRole("link", { name: "Get ideas" }));
-    expect(screen.getByText("Tell me roughly when, with whom and your budget")).toBeInTheDocument();
+    expect(screen.getByText("Let's come up with ideas for your trip")).toBeInTheDocument();
     expect(screen.queryByText(/three places that fit a cool/)).toBeNull();
   });
 });

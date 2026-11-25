@@ -45,6 +45,8 @@ BUDGETS: Mapping[str, tuple[Decimal, list[str]]] = {
     "premium": (Decimal("25000000"), ["luxury"]),
 }
 ORIGINS = {"hanoi": "Hà Nội", "hcmc": "TP. Hồ Chí Minh", "danang": "Đà Nẵng"}
+# The starting point when the visitor's location is unknown and nothing else names one
+DEFAULT_ORIGIN = ORIGINS["hanoi"]
 HOLIDAY_MONTHS = {
     "holiday_30_4": "April",
     "holiday_2_9": "September",

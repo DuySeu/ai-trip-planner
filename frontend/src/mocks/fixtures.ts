@@ -1,5 +1,6 @@
 import type {
   Category,
+  CurrentLocation,
   FlightCard,
   HealthStats,
   HotelCard,
@@ -23,6 +24,12 @@ export const FAILED_TRIP_ID = "3d0a6e4c-9f5b-4c1d-a043-7e8f9a0b1c04";
 export const SEED_CONVERSATION_ID = "4e1b7f5d-a06c-4d2e-b154-8f9a0b1c2d05";
 export const THB_RATE = 720.5;
 export const RATE_DATE = "2026-11-16";
+
+export const CURRENT_LOCATION: CurrentLocation = {
+  city: "Thành phố Hồ Chí Minh",
+  country_code: "VN",
+  weather: { temperature_c: 28.4, weather_code: 1, summary: "Mainly clear" },
+};
 
 export const PLACES: Place[] = [
   { name: "Hà Nội", country_code: "VN", admin1: "Hà Nội", lat: 21.0245, lon: 105.8412 },

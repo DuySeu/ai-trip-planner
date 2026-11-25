@@ -76,7 +76,10 @@ def run_create_trip_turn(turn: ChatTurn, deps: ChatDeps) -> Iterator[ChatEvent]:
     if destination is not None:
         draft["destination"] = destination.model_dump(mode="json")
 
-    metadata = {"status": "open", "draft": draft, "trip_id": None}
+    # The form starts from the visitor's current city when nothing named an origin; the saved
+    # draft does not get it
+    shown = draft if draft.get("origin") else {**draft, "origin": turn.default_origin}
+    metadata = {"status": "open", "draft": shown, "trip_id": None}
     with deps.pool.connection() as conn:
         conversations.save_draft(conn, turn.conversation_id, draft)
         form = messages.add_message(

@@ -7,12 +7,17 @@ import { apiUrl } from "../api/client.ts";
 import { DOMESTIC_TRIP_ID, SEED_CONVERSATION_ID } from "../mocks/fixtures.ts";
 import { mockDb } from "../mocks/mockDb.ts";
 import { server } from "../mocks/server.ts";
+import { LanguageProvider } from "../i18n/LanguageProvider.tsx";
 import { createQueryClient } from "../queryClient.ts";
 import { useChatStream } from "./useChatStream.ts";
 
 // Providers for the hook
 function wrapper({ children }: { children: ReactNode }) {
-  return <QueryClientProvider client={createQueryClient()}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={createQueryClient()}>
+      <LanguageProvider initialLang="en">{children}</LanguageProvider>
+    </QueryClientProvider>
+  );
 }
 
 describe("useChatStream", () => {

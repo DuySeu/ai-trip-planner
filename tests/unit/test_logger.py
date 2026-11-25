@@ -122,3 +122,30 @@ def test_fmt_renders_collections_as_json_and_others_as_text():
     assert fmt({"city": "Huế", "days": 3}) == '{"city": "Huế", "days": 3}'
     assert fmt([1, 2], pretty=True) == "[\n  1,\n  2\n]"
     assert fmt(42) == "42"
+
+
+def test_coordinates_in_query_strings_are_redacted(root_logger, capsys):
+    setup_logging()
+    log = logging.getLogger("httpx")
+    log.info("HTTP Request: GET https://h/reverse?format=jsonv2&lat=10.78&lon=-106.7&zoom=10")
+    log.info("GET /weather/current?latitude=10.78&longitude=106.7&language=vi")
+    first, second = lines(capsys)
+    assert first.endswith("GET https://h/reverse?format=jsonv2&lat=*&lon=*&zoom=10")
+    assert second.endswith("GET /weather/current?latitude=*&longitude=*&language=vi")
+
+
+def test_redaction_keeps_words_that_only_end_in_lat():
+    formatter = ColorFormatter(use_color=False)
+    record = logging.makeLogRecord({"msg": "flat=3 plateau ok", "levelno": logging.INFO})
+    assert "flat=3 plateau ok" in formatter.format(record)
+
+
+def test_coordinates_in_exception_text_are_redacted(root_logger, capsys):
+    setup_logging()
+    try:
+        raise RuntimeError("GET https://h/forecast?latitude=10.78&longitude=106.7 failed")
+    except RuntimeError:
+        logging.getLogger("api").exception("unexpected error")
+    text = capsys.readouterr().err
+    assert "latitude=*&longitude=*" in text
+    assert "10.78" not in text

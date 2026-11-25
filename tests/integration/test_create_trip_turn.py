@@ -84,9 +84,13 @@ class Rig:
         self.deps = ChatDeps(pool, router, FakeSearch(), load_settings(ENV), lambda: NOW, places)
 
     # Save the visitor's message and stream the reply to the end
-    def say(self, conversation_id: Any, content: str) -> list[ChatEvent]:
+    def say(
+        self, conversation_id: Any, content: str, default_origin: str | None = None
+    ) -> list[ChatEvent]:
         with self.pool.connection() as conn:
-            turn = prepare_message(conn, conversation_id, content, None, None)
+            turn = prepare_message(
+                conn, conversation_id, content, None, None, default_origin=default_origin
+            )
         return list(stream_reply(turn, self.deps))
 
 
@@ -136,7 +140,7 @@ def test_invalid_model_output_still_gives_form_from_old_draft(db_pool, db_conn, 
     rig = Rig(db_pool, ["not json", "still not json"])
     events = rig.say(conversation.id, "plan a trip")
     assert [e.type for e in events] == ["metadata", "done"]
-    assert events[0].data["metadata"]["draft"] == {"travelers": 4}
+    assert events[0].data["metadata"]["draft"] == {"travelers": 4, "origin": "Hà Nội"}
     assert rig.places_calls == []
 
 
@@ -164,4 +168,36 @@ def test_past_dates_from_the_model_are_not_kept(db_pool, db_conn, conversation):
     answer = json.dumps({"start_date": "2026-11-01", "end_date": "2026-11-03", "length_days": 3})
     rig = Rig(db_pool, [answer])
     events = rig.say(conversation.id, "plan a 3 day trip")
-    assert events[0].data["metadata"]["draft"] == {"length_days": 3}
+    assert events[0].data["metadata"]["draft"] == {"length_days": 3, "origin": "Hà Nội"}
+
+
+def test_trip_form_metadata_gets_default_origin_but_draft_does_not(db_pool, db_conn, conversation):
+    extract = json.dumps({"destination_name": "Hải Phòng", "length_days": 3})
+    events = Rig(db_pool, [extract]).say(conversation.id, "tạo plan", default_origin="Đà Nẵng")
+    assert events[0].data["metadata"]["draft"]["origin"] == "Đà Nẵng"
+    assert "origin" not in get_conversation(db_conn, conversation.id).request_draft
+    assert recent_messages(db_conn, conversation.id, 1)[-1].metadata["draft"]["origin"] == (
+        "Đà Nẵng"
+    )
+
+
+def test_trip_form_without_any_origin_falls_back_to_hanoi(db_pool, conversation):
+    extract = json.dumps({"destination_name": "Hải Phòng"})
+    events = Rig(db_pool, [extract]).say(conversation.id, "tạo plan")
+    assert events[0].data["metadata"]["draft"]["origin"] == "Hà Nội"
+
+
+def test_trip_form_keeps_origin_from_chat_over_default(db_pool, db_conn, conversation):
+    extract = json.dumps({"destination_name": "Hải Phòng", "origin": "Huế"})
+    events = Rig(db_pool, [extract]).say(
+        conversation.id, "tạo plan từ Huế", default_origin="Đà Nẵng"
+    )
+    assert events[0].data["metadata"]["draft"]["origin"] == "Huế"
+    assert get_conversation(db_conn, conversation.id).request_draft["origin"] == "Huế"
+
+
+def test_trip_form_keeps_draft_origin_over_default(db_pool, db_conn, conversation):
+    save_draft(db_conn, conversation.id, {"origin": "Cần Thơ"})
+    extract = json.dumps({"destination_name": "Hải Phòng"})
+    events = Rig(db_pool, [extract]).say(conversation.id, "tạo plan", default_origin="Đà Nẵng")
+    assert events[0].data["metadata"]["draft"]["origin"] == "Cần Thơ"

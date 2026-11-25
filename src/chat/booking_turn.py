@@ -7,7 +7,8 @@ back through ``POST /chat`` with the card's id and skip the router. Results go o
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+import unicodedata
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 from agents.flight_options_agent import FlightOptionsAgent
@@ -18,6 +19,7 @@ from core.exceptions import ResearchFailed
 from db.repositories import conversations, messages, research
 from db.repositories.research import SourceInput, SourceRow
 from domain.booking import BookingDates, BookingKind, dates_errors, dates_from
+from domain.discovery import RequestDraft, merge_draft
 from domain.flights import flight_cards_out
 from domain.hotels import hotel_cards_out
 from domain.trip_request import today_in_vietnam
@@ -38,8 +40,9 @@ ASK_DATES: dict[BookingKind, tuple[str, str]] = {
 SEARCH_TASK: dict[BookingKind, Any] = {"hotel": "accommodation", "flight": "transport"}
 
 
-# Search when the open trip or the draft gives dates that still keep the rules (and, for tickets, the
-# origin); else save a need_dates card and send it in one metadata event
+# Search when the open trip or the draft gives dates that still keep the rules; else save a
+# need_dates card and send it in one metadata event. A ticket search always has a known origin:
+# the open trip's, else the draft's, else the visitor's current city (or Hà Nội)
 def run_booking_turn(
     data: ChatContext,
     turn: ChatTurn,
@@ -51,9 +54,9 @@ def run_booking_turn(
     with deps.pool.connection() as conn:
         draft = conversations.get_conversation(conn, turn.conversation_id).request_draft or {}
     dates = dates_from(kind, draft, data.request)
-    origin = data.request.origin if data.request is not None else draft.get("origin")
+    origin = _known_origin(data, turn, draft)
     today = today_in_vietnam(deps.now())
-    if dates is None or dates_errors(kind, dates, today) or (kind == "flight" and not origin):
+    if dates is None or dates_errors(kind, dates, today):
         yield from _ask_dates(turn, deps, kind, query)
         return
     yield from _search(data, turn, deps, call_ctx, kind, query, dates, origin)
@@ -84,8 +87,7 @@ def run_booking_follow_up(
             learned["origin"] = follow_up.origin
         if learned:
             conversations.save_draft(conn, turn.conversation_id, {**draft, **learned})
-    known_origin = data.request.origin if data.request is not None else draft.get("origin")
-    origin = follow_up.origin or known_origin
+    origin = follow_up.origin or _known_origin(data, turn, draft)
     yield from _search(data, turn, deps, call_ctx, kind, meta["query"], dates, origin)
 
 
@@ -100,7 +102,7 @@ def _search(
     kind: BookingKind,
     query: str,
     dates: BookingDates,
-    origin: str | None,
+    origin: str,
 ) -> Iterator[ChatEvent]:
     if kind == "hotel":
         assert dates.check_in is not None and dates.check_out is not None
@@ -111,7 +113,10 @@ def _search(
         assert dates.depart is not None
         month = dates.depart
         back = f", return {dates.return_.isoformat()}" if dates.return_ else ""
-        when = f"depart {dates.depart.isoformat()}{back}, from {origin}"
+        when = (
+            f"depart {dates.depart.isoformat()}{back}, known origin {origin}; "
+            "if the visitor names another origin in this message, use that one"
+        )
         shown = dates.model_dump(mode="json", include={"depart", "return_"}, by_alias=True)
 
     task = SEARCH_TASK[kind]
@@ -142,6 +147,16 @@ def _search(
         flight = FlightOptionsAgent(deps.router).run(content, call_ctx)
         reply, written = flight.reply, len(flight.cards)
         cards = flight_cards_out(flight.cards, urls)
+        # An origin the visitor named in the message beats the known one, so it goes in the draft.
+        # The model may echo the known origin in another spelling, so code checks the message
+        named = (flight.origin or "").strip()
+        if named and _fold(named) != _fold(origin) and _fold(named) in _fold(turn.message.content):
+            with deps.pool.connection() as conn:
+                draft = conversations.get_conversation(conn, turn.conversation_id).request_draft
+                learned = RequestDraft(origin=named)
+                conversations.save_draft(
+                    conn, turn.conversation_id, merge_draft(draft or {}, learned)
+                )
     logger.info(
         "%s options: %d results, model wrote %d cards, %d kept",
         kind,
@@ -175,6 +190,20 @@ def _search(
                     "booking_search",
                     metadata,
                 )
+
+
+# The origin of a ticket search when the visitor names none: the open trip's, the draft's, else
+# the visitor's current city; the last one is never written to the draft
+def _known_origin(data: ChatContext, turn: ChatTurn, draft: Mapping[str, Any]) -> str:
+    if data.request is not None:
+        return data.request.origin
+    return str(draft.get("origin") or turn.default_origin)
+
+
+# Text for matching place names: NFC, no accents (đ as d), lower case, single spaces
+def _fold(text: str) -> str:
+    plain = unicodedata.normalize("NFKD", text.replace("đ", "d").replace("Đ", "D"))
+    return " ".join("".join(c for c in plain if not unicodedata.combining(c)).casefold().split())
 
 
 # Save the card asking for dates, then send its question and the card with its id

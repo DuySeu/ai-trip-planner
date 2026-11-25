@@ -64,7 +64,7 @@ export function TripPage() {
   const chat = (
     <ChatPanel
       conversationId={conversationId}
-      trip={{ id: data.id, planRevision: data.plan_revision }}
+      trip={{ id: data.id, planRevision: data.plan_revision, origin: data.origin }}
       disabledReason={hasPlan ? null : "chat.disabledFirstPlan"}
       onConversationCreated={setCreatedConversationId}
     />
