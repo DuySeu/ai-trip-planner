@@ -19,6 +19,7 @@ from core.settings import Settings, load_settings
 from db.call_sink import DbCallSink
 from db.repositories import llm_calls, quota
 from models.model_router import ModelRouter
+from tests.fakes import FakeProvider
 
 ENV = {
     "DB_USER": "u",
@@ -36,14 +37,15 @@ ENV = {
 
 
 # App with injected services; the pool is whatever the test passes
-def make_app(pool: ConnectionPool, settings: Settings | None = None) -> FastAPI:
+def make_app(
+    pool: ConnectionPool, settings: Settings | None = None, provider: str = "openrouter"
+) -> FastAPI:
     settings = settings or load_settings(ENV)
     now = lambda: datetime.now(UTC)  # noqa: E731
     router = ModelRouter(
-        provider_for=lambda model_id: cast(Any, None),
+        llm=FakeProvider([], name=provider),
         models={},
         sink=DbCallSink(pool),
-        daily_cap_pattern="x",
         reset_hour_utc=0,
         now=now,
     )
@@ -187,8 +189,8 @@ def test_ready_returns_200_when_db_answers(db_pool):
 
 
 # An app with one trip route and one chat route behind the quota gate
-def quota_app(pool: ConnectionPool) -> TestClient:
-    app = make_app(pool)
+def quota_app(pool: ConnectionPool, provider: str = "openrouter") -> TestClient:
+    app = make_app(pool, provider=provider)
 
     # POST /trip - Gated as a new trip
     @app.post("/trip", dependencies=[Depends(require_quota("trip"))])
@@ -212,6 +214,12 @@ def test_active_quota_block_returns_429_quota_exhausted(db_pool, db_conn):
         assert response.status_code == 429
         assert response.json()["error"]["code"] == "quota_exhausted"
         assert until.isoformat() in response.json()["error"]["message"]
+
+
+def test_quota_gate_checks_the_block_of_the_provider_in_use(db_pool, db_conn):
+    quota.block(db_conn, "openai", datetime.now(UTC) + timedelta(hours=2), "out of credit")
+    assert quota_app(db_pool, provider="openai").post("/gated-chat").status_code == 429
+    assert quota_app(db_pool, provider="openrouter").post("/gated-chat").status_code == 200
 
 
 def test_expired_quota_block_lets_requests_through(db_pool, db_conn):

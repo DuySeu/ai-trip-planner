@@ -6,16 +6,26 @@ from typing import Any, ClassVar, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .providers import ChatClient, Embedder
+from models.model_router import CallContext, ModelRouter
+
 from .types import GuardContext, GuardrailConfigError, GuardResult
 
 _REGISTRY: dict[str, type[Guard]] = {}
 
 
+# What guards that call a model use: the app's router (fallback, call log, quota, budget) and the
+# context its calls are logged and budgeted against
 @dataclass(frozen=True)
 class GuardDeps:
-    chat_client: ChatClient | None = None
-    embedder: Embedder | None = None
+    router: ModelRouter | None = None
+    ctx: CallContext = CallContext()
+
+
+# The router of deps, or a config error naming the guard that needs it
+def require_router(deps: GuardDeps, guard: str) -> ModelRouter:
+    if deps.router is None:
+        raise GuardrailConfigError(f"guard '{guard}' needs a router")
+    return deps.router
 
 
 # Parameters every guard accepts; each guard's Params subclasses this

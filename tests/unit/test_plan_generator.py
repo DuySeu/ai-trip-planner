@@ -81,10 +81,9 @@ def answer(price_factor: Decimal = Decimal(1), plan: Plan = FIXTURE) -> str:
 # A router whose only model answers from the provider
 def make_router(provider: FakeProvider) -> ModelRouter:
     return ModelRouter(
-        provider_for=lambda model_id: provider,
+        llm=provider,
         models={"generate": [MODEL], "repair": [MODEL]},
         sink=FakeSink(),
-        daily_cap_pattern="free-models-per-day",
         reset_hour_utc=0,
         now=lambda: datetime(2026, 11, 17, 15, 0, tzinfo=UTC),
     )

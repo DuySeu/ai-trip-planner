@@ -35,7 +35,7 @@ from db.repositories.messages import MessageRow
 from domain.booking import BookingDates, BookingKind, dates_errors
 from domain.trip_request import Language, today_in_vietnam
 from guardrail import Action
-from models.model_router import CallContext, ModelRouter, RouterProvider
+from models.model_router import CallContext, ModelRouter
 from orchestration.routing_schema import AgentSpec, RoutingDecision
 from research.places import Place
 from service.tavily.search import WebSearch
@@ -337,7 +337,6 @@ def _reopen_on_failure(
 def _classify(
     data: ChatContext, turn: ChatTurn, deps: ChatDeps, call_ctx: CallContext
 ) -> RoutingDecision:
-    provider = RouterProvider(deps.router, "classify", call_ctx)
-    agent = OrchestratorAgent(model_id=provider.model_id, inference_config={}, llm=provider)
     history = [{"role": m.role, "content": message_for_model(m)} for m in data.history]
-    return agent.route([*history, {"role": "user", "content": turn.message.content}], CATALOG)
+    messages = [*history, {"role": "user", "content": turn.message.content}]
+    return OrchestratorAgent(deps.router).route(messages, CATALOG, call_ctx)

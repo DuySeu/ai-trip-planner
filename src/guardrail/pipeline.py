@@ -7,12 +7,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
+from models.model_router import CallContext, ModelRouter
+
 from .config import parse_config
-from .providers import ChatClient, Embedder
-from .registry import Guard, GuardDeps, build_guard, guard_class
-from .types import Action, Decision, GuardContext, GuardrailConfigError, GuardResult, Stage, decide
+from .registry import Guard, GuardDeps, build_guard
+from .types import Action, Decision, GuardContext, GuardResult, Stage, decide
 
 NETWORK_TIMEOUT_S = 10.0
+# Calls made outside a chat turn or a job: no ids in the log, no budget
+NO_CONTEXT = CallContext()
 
 logger = logging.getLogger(__name__)
 
@@ -57,24 +60,18 @@ class Guardrail:
         return decide(current, results)
 
 
-# Build a guardrail from a config mapping; a guard that needs a client the caller did not pass is a
-# config error
+# Build a guardrail from a config mapping; a guard that calls a model without a router is a config
+# error. Model calls go through router and are logged and budgeted against ctx
 def load_guardrail(
     config: Mapping[str, Any],
-    chat_client: ChatClient | None = None,
-    embedder: Embedder | None = None,
+    router: ModelRouter | None = None,
+    ctx: CallContext = NO_CONTEXT,
 ) -> Guardrail:
     stages = parse_config(config)
-
-    needed = set().union(*(guard_class(e["type"]).requires for es in stages.values() for e in es))
-    passed = {"chat": chat_client, "embedder": embedder}
-    missing = sorted(kind for kind in needed if passed[kind] is None)
-    if missing:
-        raise GuardrailConfigError(f"config needs clients that were not passed: {missing}")
-
-    deps = GuardDeps(chat_client=chat_client, embedder=embedder)
+    deps = GuardDeps(router=router, ctx=ctx)
     guards = {
-        stage: [build_guard(e["type"], e, deps) for e in entries] for stage, entries in stages.items()
+        stage: [build_guard(e["type"], e, deps) for e in entries]
+        for stage, entries in stages.items()
     }
     return Guardrail(guards)
 

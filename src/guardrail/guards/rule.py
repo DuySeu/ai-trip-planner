@@ -126,4 +126,3 @@ class KeywordGuard(_PatternGuard):
         alternation = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
         flags = 0 if params.case_sensitive else re.IGNORECASE
         self.compiled = [(self.name, re.compile(rf"(?<!\w)(?:{alternation})(?!\w)", flags))]
-

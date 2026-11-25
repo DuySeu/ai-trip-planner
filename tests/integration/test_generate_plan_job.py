@@ -9,7 +9,6 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-import httpx
 import pytest
 from psycopg.rows import class_row
 
@@ -21,6 +20,7 @@ from db.repositories.research import sources_for_trip
 from db.repositories.trips import TripRow, create_trip, get_trip, save_plan, set_status
 from db.repositories.users import claim_user
 from domain.plan import Plan
+from models.llm_factory import ProviderCallError
 from models.model_router import ModelRouter
 from research.research_service import ResearchDeps
 from service.tavily.search import SearchHit, WebSearch
@@ -49,7 +49,7 @@ HITS = [
     SearchHit("Grand Palace", "https://example.com/a", "Grand Palace 500 THB"),
     SearchHit("Pad thai", "https://example.com/b", "Pad thai 60 THB"),
 ]
-UNAVAILABLE = httpx.ConnectError("down")
+UNAVAILABLE = ProviderCallError("provider_error", "ConnectError: down")
 
 
 # Everything one test needs to run a job and look at the result
@@ -67,13 +67,12 @@ def make_rig(
     search: WebSearch | None = None,
     **settings: str,
 ) -> Rig:
-    provider = FakeProvider(script, model_id=MODEL)
+    provider = FakeProvider(script)
     sink = FakeSink()
     router = ModelRouter(
-        provider_for=lambda model_id: provider,
+        llm=provider,
         models={"generate": [MODEL], "repair": [MODEL]},
         sink=sink,
-        daily_cap_pattern="free-models-per-day",
         reset_hour_utc=0,
         now=lambda: NOW,
     )

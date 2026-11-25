@@ -5,24 +5,13 @@ renders the prompt content, and keeps only the cards whose source it knows."""
 
 from __future__ import annotations
 
+from agents.base_agent import BaseAgent
 from core.prompts import hotel_options_prompt
 from domain.hotels import HotelOptionsReply
-from models.model_router import CallContext, ModelRouter, call_json, compact_schema
+from models.model_router import CallContext
 
 
-class HotelOptionsAgent:
-    def __init__(self, router: ModelRouter) -> None:
-        self.router = router
-
+class HotelOptionsAgent(BaseAgent):
     # Write the reply and the cards; content is the tagged prompt with the search results
     def run(self, content: str, ctx: CallContext) -> HotelOptionsReply:
-        system = hotel_options_prompt.format(schema=compact_schema(HotelOptionsReply, {}))
-        return call_json(
-            self.router,
-            "answer",
-            system,
-            [{"role": "user", "content": content}],
-            HotelOptionsReply,
-            None,
-            ctx,
-        ).value
+        return self.ask_json("answer", hotel_options_prompt, HotelOptionsReply, content, ctx)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
@@ -13,17 +12,14 @@ from datetime import datetime, timedelta
 from typing import Any, Literal, NoReturn, Protocol
 from uuid import UUID
 
-import httpx
-from openrouter import errors as openrouter_errors
 from pydantic import BaseModel, ValidationError
 
-from core.constants import ModelId
 from core.exceptions import InvalidLLMOutput, LLMBudgetExceeded, LLMUnavailable, QuotaExhausted
 from db.repositories.llm_calls import LlmCallRecord
-from models.base import LLMProvider, LLMResponse, StreamChunk
+from models.llm_factory import Embedder, LLMProvider, LLMResponse, ProviderCallError
 
 Purpose = Literal[
-    "generate", "repair", "classify", "edit", "answer", "discover", "suggest", "guard"
+    "generate", "repair", "classify", "edit", "answer", "discover", "suggest", "guard", "embed"
 ]
 Outcome = Literal[
     "ok", "rate_limited", "quota_exhausted", "timeout", "provider_error", "invalid_output"
@@ -31,7 +27,6 @@ Outcome = Literal[
 
 logger = logging.getLogger(__name__)
 
-SERVICE = "openrouter"
 MAX_ERROR_CHARS = 300
 # What each purpose does, for the log line of a call
 STEPS: Mapping[Purpose, str] = {
@@ -43,17 +38,8 @@ STEPS: Mapping[Purpose, str] = {
     "guard": "check the chat message is about travel",
     "generate": "write the trip plan",
     "repair": "fix invalid JSON",
+    "embed": "embed text for similarity",
 }
-KNOWN_MODEL_IDS = frozenset(
-    value for name, value in vars(ModelId).items() if isinstance(value, str) and name[0] != "_"
-)
-# Errors a provider call can raise for a model that is down or limited; anything else is a bug
-PROVIDER_ERRORS = (
-    openrouter_errors.OpenRouterError,
-    openrouter_errors.NoResponseError,
-    httpx.HTTPError,
-)
-TIMEOUT_STATUSES = frozenset({408, 504, 524})
 
 
 # The LLM calls one job attempt may still make; the only mutable object here
@@ -90,44 +76,34 @@ class CallSink(Protocol):
     def blocked_until(self, service: str) -> datetime | None: ...
 
 
-# Name the outcome of a failed provider call; the daily cap is told from a per-minute 429 by its text
-def classify_error(exc: Exception, daily_cap_pattern: str) -> Outcome:
-    if isinstance(exc, openrouter_errors.OpenRouterError):
-        if exc.status_code == 429:
-            text = f"{exc.message} {exc.body}"
-            return (
-                "quota_exhausted"
-                if re.search(daily_cap_pattern, text, re.IGNORECASE)
-                else "rate_limited"
-            )
-        return "timeout" if exc.status_code in TIMEOUT_STATUSES else "provider_error"
-    if isinstance(exc, httpx.TimeoutException):
-        return "timeout"
-    return "provider_error"
-
-
 class ModelRouter:
     def __init__(
         self,
-        provider_for: Callable[[str], LLMProvider],
+        llm: LLMProvider,
         models: Mapping[Purpose, Sequence[str]],
         sink: CallSink,
-        daily_cap_pattern: str,
         reset_hour_utc: int,
         now: Callable[[], datetime],
+        timeouts: Mapping[Purpose, float] | None = None,
     ) -> None:
-        self._provider_for = provider_for
+        self._llm = llm
         self._models = models
         self._sink = sink
-        self._daily_cap_pattern = daily_cap_pattern
         self._reset_hour_utc = reset_hour_utc
         self._now = now
+        self._timeouts = timeouts or {}
 
-    # The configured model ids for a purpose, in order, without ids missing from ModelId
+    # The quota service of the provider in use
+    @property
+    def service(self) -> str:
+        return self._llm.name
+
+    # The configured model ids for a purpose, in order, without ids the provider does not accept
     def models_for(self, purpose: Purpose) -> list[str]:
-        return [m for m in self._models.get(purpose, ()) if m in KNOWN_MODEL_IDS]
+        return [m for m in self._models.get(purpose, ()) if self._llm.accepts(m)]
 
-    # One call to one model: checks the block, takes the budget, logs, maps errors
+    # One call to one model: checks the block, takes the budget, logs, maps errors. timeout_purpose
+    # picks the timeout when it differs from the logged purpose (a repair keeps its flow's timeout)
     def invoke_model(
         self,
         model_id: str,
@@ -136,20 +112,21 @@ class ModelRouter:
         system_prompt: str,
         ctx: CallContext,
         response_format: Mapping[str, Any] | None = None,
+        timeout_purpose: Purpose | None = None,
     ) -> LLMResponse:
         self._begin(ctx)
         started = time.monotonic()
         try:
-            response = self._provider_for(model_id).invoke(
-                [dict(m) for m in messages],
+            response = self._llm.invoke(
+                model_id,
+                messages,
                 system_prompt,
-                response_format=dict(response_format) if response_format else None,
+                response_format=response_format,
+                timeout_s=self._timeouts.get(timeout_purpose or purpose),
             )
-        except PROVIDER_ERRORS as exc:
-            outcome = classify_error(exc, self._daily_cap_pattern)
-            self._log(model_id, purpose, ctx, outcome, started, error=exc)
-            self._raise_for(outcome, exc)
-        assert isinstance(response, LLMResponse)
+        except ProviderCallError as exc:
+            self._log(model_id, purpose, ctx, exc.outcome, started, error=exc)
+            self._raise_for(exc.outcome, exc)
         self._log(
             model_id,
             purpose,
@@ -191,6 +168,50 @@ class ModelRouter:
     ) -> LLMResponse:
         return self.invoke_with_model(purpose, messages, system_prompt, ctx, response_format)[0]
 
+    # Embed texts with one model: checks the block, takes the budget, logs, maps errors. A reply
+    # without one vector per text is invalid output, so the caller can try the next model
+    def embed_model(
+        self, model_id: str, texts: Sequence[str], ctx: CallContext
+    ) -> list[list[float]]:
+        if not isinstance(self._llm, Embedder):
+            raise LLMUnavailable(f"provider {self.service} has no embedding models")
+        self._begin(ctx)
+        started = time.monotonic()
+        try:
+            response = self._llm.embed(model_id, texts, timeout_s=self._timeouts.get("embed"))
+        except ProviderCallError as exc:
+            self._log(model_id, "embed", ctx, exc.outcome, started, error=exc)
+            self._raise_for(exc.outcome, exc)
+        if len(response.vectors) != len(texts):
+            error = f"{len(response.vectors)} vectors for {len(texts)} texts"
+            self._log(model_id, "embed", ctx, "invalid_output", started, error=ValueError(error))
+            raise LLMUnavailable(f"invalid_output: {error}")
+        self._log(
+            model_id,
+            "embed",
+            ctx,
+            "ok",
+            started,
+            input_tokens=response.input_tokens,
+            output_tokens=0,
+        )
+        return response.vectors
+
+    # Embed texts with model_id, or with the first model of the embed chain that answers
+    def embed(
+        self, texts: Sequence[str], ctx: CallContext, model_id: str | None = None
+    ) -> list[list[float]]:
+        if model_id is not None:
+            return self.embed_model(model_id, texts, ctx)
+        if not isinstance(self._llm, Embedder):
+            raise LLMUnavailable(f"provider {self.service} has no embedding models")
+        for candidate in self.models_for("embed"):
+            try:
+                return self.embed_model(candidate, texts, ctx)
+            except LLMUnavailable:
+                continue
+        raise LLMUnavailable("no model answered for purpose embed")
+
     # Stream text; the next model is tried only while no token was sent yet
     def stream(
         self,
@@ -206,15 +227,15 @@ class ModelRouter:
             outcome: Outcome = "ok"
             error: Exception | None = None
             try:
-                for chunk in self._provider_for(model_id).invoke_stream(
-                    [dict(m) for m in messages], system_prompt
+                for chunk in self._llm.invoke_stream(
+                    model_id, messages, system_prompt, timeout_s=self._timeouts.get(purpose)
                 ):
                     if chunk.delta:
                         sent = True
                         yield chunk.delta
                 return
-            except PROVIDER_ERRORS as exc:
-                outcome = classify_error(exc, self._daily_cap_pattern)
+            except ProviderCallError as exc:
+                outcome = exc.outcome
                 error = exc
                 if sent or outcome == "quota_exhausted":
                     self._raise_for(outcome, exc)
@@ -224,7 +245,7 @@ class ModelRouter:
 
     # Refuse while the service is blocked, then count the call against the budget
     def _begin(self, ctx: CallContext) -> None:
-        until = self._sink.blocked_until(SERVICE)
+        until = self._sink.blocked_until(self.service)
         if until is not None and until > self._now():
             raise QuotaExhausted(until)
         if ctx.budget is not None:
@@ -240,7 +261,7 @@ class ModelRouter:
     def _raise_for(self, outcome: Outcome, exc: Exception) -> NoReturn:
         if outcome == "quota_exhausted":
             until = self._next_reset()
-            self._sink.block(SERVICE, until, str(exc)[:MAX_ERROR_CHARS])
+            self._sink.block(self.service, until, str(exc)[:MAX_ERROR_CHARS])
             raise QuotaExhausted(until) from exc
         raise LLMUnavailable(f"{outcome}: {exc}"[:MAX_ERROR_CHARS]) from exc
 
@@ -257,7 +278,15 @@ class ModelRouter:
         error: Exception | None = None,
     ) -> None:
         latency_ms = round((time.monotonic() - started) * 1000)
-        error_text = None if error is None else f"{type(error).__name__}: {error}"[:MAX_ERROR_CHARS]
+        # A ProviderCallError's text already names the SDK error
+        error_text = None
+        if error is not None:
+            text = (
+                str(error)
+                if isinstance(error, ProviderCallError)
+                else f"{type(error).__name__}: {error}"
+            )
+            error_text = text[:MAX_ERROR_CHARS]
         self._sink.log(
             LlmCallRecord(
                 purpose=purpose,
@@ -286,43 +315,6 @@ class ModelRouter:
             tokens,
             f", {error_text}" if error_text else "",
         )
-
-
-# Exposes the router's fallback chain for one purpose as a single LLMProvider
-class RouterProvider(LLMProvider):
-    def __init__(self, router: ModelRouter, purpose: Purpose, ctx: CallContext) -> None:
-        models = router.models_for(purpose)
-        super().__init__(models[0] if models else purpose, {})
-        self._router = router
-        self._purpose = purpose
-        self._ctx = ctx
-
-    # Answer through the chain; model_id then names the model that answered
-    def invoke(
-        self,
-        messages: Sequence[Mapping[str, Any]],
-        system_prompt: str,
-        tools: list[dict[str, Any]] | None = None,
-        response_format: dict[str, Any] | None = None,
-    ) -> LLMResponse:
-        if tools:
-            raise ValueError("RouterProvider does not support tools")
-        response, self.model_id = self._router.invoke_with_model(
-            self._purpose, messages, system_prompt, self._ctx, response_format
-        )
-        return response
-
-    # Stream text deltas through the chain
-    def invoke_stream(  # type: ignore[override]
-        self,
-        messages: Sequence[Mapping[str, Any]],
-        system_prompt: str,
-        tools: list[dict[str, Any]] | None = None,
-    ) -> Iterator[StreamChunk]:
-        if tools:
-            raise ValueError("RouterProvider does not support tools")
-        for text in self._router.stream(self._purpose, messages, system_prompt, self._ctx):
-            yield StreamChunk(delta=text)
 
 
 REPAIR_PROMPT = """Your previous reply could not be used. Errors, one per line:
@@ -384,7 +376,13 @@ def call_json[T: BaseModel](
         for _ in range(2):
             try:
                 response = router.invoke_model(
-                    model_id, attempt_purpose, attempt_messages, system_prompt, ctx, response_format
+                    model_id,
+                    attempt_purpose,
+                    attempt_messages,
+                    system_prompt,
+                    ctx,
+                    response_format,
+                    timeout_purpose=purpose,
                 )
             except LLMUnavailable:
                 break

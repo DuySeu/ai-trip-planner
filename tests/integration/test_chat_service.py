@@ -8,7 +8,6 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-import httpx
 import pytest
 from psycopg_pool import ConnectionPool
 
@@ -27,6 +26,7 @@ from db.repositories.research import sources_for_trip
 from db.repositories.trips import TripRow, create_trip, get_trip, save_plan
 from db.repositories.users import UserRow, claim_user
 from domain.booking import BookingDates
+from models.llm_factory import ProviderCallError
 from models.model_router import ModelRouter
 from service.tavily.search import SearchHit
 from tests.fakes import FakeProvider, FakeSearch, FakeSink
@@ -94,10 +94,9 @@ class Rig:
         self.search = search or FakeSearch(default=HITS)
         self.pool = pool
         router = ModelRouter(
-            provider_for=lambda model_id: self.provider,
+            llm=self.provider,
             models={purpose: [MODEL] for purpose in PURPOSES},  # type: ignore[misc]
             sink=self.sink,
-            daily_cap_pattern="free-models-per-day",
             reset_hour_utc=0,
             now=lambda: NOW,
         )
@@ -569,7 +568,9 @@ def test_booking_follow_up_closes_the_card_before_the_stream_so_a_second_press_s
 
 def test_booking_follow_up_reopens_the_card_when_the_model_fails(db_pool, db_conn, conversation):
     card = need_dates(db_conn, conversation)
-    rig = Rig(db_pool, [httpx.ConnectError("down")], FakeSearch(default=[]))
+    rig = Rig(
+        db_pool, [ProviderCallError("provider_error", "ConnectError: down")], FakeSearch(default=[])
+    )
     dates = BookingDates(check_in=date(2026, 12, 20), check_out=date(2026, 12, 22))
     events = rig.say(conversation.id, "Search", follow_up=FollowUp(card.id, "booking", dates))
     assert [e.data.get("code") for e in events if e.type == "error"] == ["llm_unavailable"]
@@ -733,9 +734,11 @@ class Watcher(FakeProvider):
         self.busy: list[int] = []
 
     # Count the checked-out connections, then answer as the script says
-    def _next(self, messages: Any, system_prompt: str) -> str:
+    def _next(
+        self, model_id: str, messages: Any, system_prompt: str, timeout_s: float | None
+    ) -> str:
         self.busy.append(checked_out(self.pool))
-        return super()._next(messages, system_prompt)
+        return super()._next(model_id, messages, system_prompt, timeout_s)
 
 
 # Connections of the pool that are in use right now
@@ -769,7 +772,7 @@ def test_quota_exhausted_yields_error_event(db_pool, conversation):
 
 
 def test_model_failure_yields_llm_unavailable_error_event(db_pool, conversation):
-    rig = Rig(db_pool, [httpx.ConnectError("down")])
+    rig = Rig(db_pool, [ProviderCallError("provider_error", "ConnectError: down")])
     events = rig.say(conversation.id, "hello there")
     assert [e.data.get("code") for e in events if e.type == "error"] == ["llm_unavailable"]
 

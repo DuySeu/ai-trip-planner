@@ -9,15 +9,13 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
+from agents.base_agent import BaseAgent
 from core.prompts import create_trip_prompt
 from domain.discovery import HIDDEN_FIELDS, TripFormExtract, discovery_content
-from models.model_router import CallContext, ModelRouter, call_json, compact_schema
+from models.model_router import CallContext
 
 
-class CreateTripAgent:
-    def __init__(self, router: ModelRouter) -> None:
-        self.router = router
-
+class CreateTripAgent(BaseAgent):
     # Read the trip fields the chat already holds
     # conversation is the rendered <conversation> block, "" when there is none
     def run(
@@ -28,18 +26,10 @@ class CreateTripAgent:
         message: str,
         ctx: CallContext,
     ) -> TripFormExtract:
-        system = create_trip_prompt.format(schema=compact_schema(TripFormExtract, HIDDEN_FIELDS))
         content = discovery_content(today, draft, conversation, message)
-        return call_json(
-            self.router,
-            "discover",
-            system,
-            [{"role": "user", "content": content}],
-            TripFormExtract,
-            None,
-            ctx,
-            HIDDEN_FIELDS,
-        ).value
+        return self.ask_json(
+            "discover", create_trip_prompt, TripFormExtract, content, ctx, drop=HIDDEN_FIELDS
+        )
 
 
 # The extract without its dates when they start before today; the model sometimes invents them

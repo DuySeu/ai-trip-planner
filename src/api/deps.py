@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from models.model_router import ModelRouter
     from service.tavily.search import WebSearch
 
-OPENROUTER = "openrouter"
 TAVILY = "tavily"
 HTTP_TIMEOUT_S = 10.0
 READY_TIMEOUT_S = 2.0
@@ -96,7 +95,8 @@ def limit_chat(request: Request, deps: Deps) -> None:
 def require_quota(kind: Literal["trip", "chat"]) -> Callable[..., None]:
     # Check provider blocks first, then the global daily ceiling for this kind
     def check(deps: Deps, conn: Conn) -> None:
-        services = (OPENROUTER, TAVILY) if kind == "trip" else (OPENROUTER,)
+        llm = deps.router.service
+        services = (llm, TAVILY) if kind == "trip" else (llm,)
         for service in services:
             until = quota.active_block(conn, service)
             if until is not None:

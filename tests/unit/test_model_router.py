@@ -1,117 +1,89 @@
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
 
-import httpx
 import pytest
-from openrouter import errors
 
 from core.constants import ModelId
 from core.exceptions import LLMBudgetExceeded, LLMUnavailable, QuotaExhausted
-from models.base import LLMProvider, StreamChunk
-from models.model_router import (
-    CallBudget,
-    CallContext,
-    ModelRouter,
-    Purpose,
-    RouterProvider,
-    classify_error,
-)
-from models.provider import OpenRouterProvider
+from models.llm_factory import LLMProvider, LLMResponse, ProviderCallError, StreamChunk
+from models.model_router import CallBudget, CallContext, ModelRouter, Purpose
 from tests.fakes import FakeProvider, FakeSink
 
-PATTERN = "free-models-per-day"
 NOW = datetime(2026, 11, 16, 15, 0, tzinfo=UTC)
 MODEL_A = ModelId.GEMMA_4_31B_IT
 MODEL_B = ModelId.NEMOTRON_3_SUPER_120B_A12B
 MESSAGES = [{"role": "user", "content": "hi"}]
 
 
-# An SDK 429 built the way the SDK builds it from a JSON body
-def rate_limit(message: str = "Rate limit exceeded") -> errors.TooManyRequestsResponseError:
-    body = json.dumps({"error": {"code": 429, "message": message}})
-    response = httpx.Response(429, text=body, headers={"content-type": "application/json"})
-    data = errors.TooManyRequestsResponseErrorData.model_validate_json(body)
-    return errors.TooManyRequestsResponseError(data, response, body)
+def limited() -> ProviderCallError:
+    return ProviderCallError("rate_limited", "TooManyRequestsResponseError: Rate limit exceeded")
 
 
-# The SDK's 404 when no endpoint of the model supports the request's parameters
-def no_endpoints() -> errors.NotFoundResponseError:
-    message = "No endpoints found that can handle the requested parameters."
-    body = json.dumps({"error": {"code": 404, "message": message}})
-    response = httpx.Response(404, text=body, headers={"content-type": "application/json"})
-    data = errors.NotFoundResponseErrorData.model_validate_json(body)
-    return errors.NotFoundResponseError(data, response, body)
+def capped() -> ProviderCallError:
+    return ProviderCallError("quota_exhausted", "TooManyRequestsResponseError: free-models-per-day")
 
 
-# The SDK's generic error for a status without a specific class
-def http_error(status: int) -> errors.OpenRouterDefaultError:
-    return errors.OpenRouterDefaultError("API error occurred", httpx.Response(status, text="oops"))
+def down(status: int = 502) -> ProviderCallError:
+    return ProviderCallError("provider_error", f"OpenRouterDefaultError: {status} oops")
 
 
 # A provider that streams some text and then fails
 class BrokenStream(LLMProvider):
+    name = "openrouter"
+
     def __init__(self, first: str, error: Exception) -> None:
-        super().__init__("fake/broken", {})
         self.first = first
         self.error = error
 
     # Not used by the stream tests
-    def invoke(self, messages: Any, system_prompt: str, tools: Any = None) -> Any:
+    def invoke(
+        self, model_id: str, messages: Any, system_prompt: str, **kwargs: Any
+    ) -> LLMResponse:
         raise AssertionError("invoke is not expected")
 
     # Yield one chunk, then raise
-    def invoke_stream(self, messages: Any, system_prompt: str, tools: Any = None) -> Iterator[Any]:
+    def invoke_stream(
+        self, model_id: str, messages: Any, system_prompt: str, **kwargs: Any
+    ) -> Iterator[StreamChunk]:
         yield StreamChunk(delta=self.first)
         raise self.error
 
 
 def make_router(
-    providers: Mapping[str, LLMProvider],
+    provider: LLMProvider,
     sink: FakeSink | None = None,
-    models: Sequence[str] | None = None,
+    models: Sequence[str] = (MODEL_A, MODEL_B),
+    timeouts: Mapping[Purpose, float] | None = None,
 ) -> tuple[ModelRouter, FakeSink]:
     sink = sink or FakeSink()
-    chain: Mapping[Purpose, Sequence[str]] = {"generate": list(models or providers), "answer": []}
+    chain: Mapping[Purpose, Sequence[str]] = {"generate": list(models), "answer": []}
     router = ModelRouter(
-        provider_for=lambda model_id: providers[model_id],
+        llm=provider,
         models=chain,
         sink=sink,
-        daily_cap_pattern=PATTERN,
         reset_hour_utc=0,
         now=lambda: NOW,
+        timeouts=timeouts,
     )
     return router, sink
 
 
-def test_classify_error_maps_sdk_and_network_errors():
-    assert classify_error(rate_limit(), PATTERN) == "rate_limited"
-    assert (
-        classify_error(rate_limit("Rate limit: free-models-per-day"), PATTERN) == "quota_exhausted"
-    )
-    assert classify_error(http_error(502), PATTERN) == "provider_error"
-    assert classify_error(http_error(408), PATTERN) == "timeout"
-    assert classify_error(errors.NoResponseError(), PATTERN) == "provider_error"
-    assert classify_error(httpx.ReadTimeout("slow"), PATTERN) == "timeout"
-    assert classify_error(httpx.ConnectError("down"), PATTERN) == "provider_error"
-
-
-def test_models_for_drops_ids_not_in_model_id():
-    router, _ = make_router({MODEL_A: FakeProvider([]), "made/up:free": FakeProvider([])})
+def test_models_for_drops_ids_the_provider_does_not_accept():
+    router, _ = make_router(FakeProvider([], known={MODEL_A}), models=(MODEL_A, "made/up:free"))
     assert router.models_for("generate") == [MODEL_A]
     assert router.models_for("answer") == []
 
 
 def test_invoke_falls_back_to_next_model_on_rate_limit():
-    providers = {MODEL_A: FakeProvider([rate_limit()]), MODEL_B: FakeProvider(["second"])}
-    router, sink = make_router(providers)
+    provider = FakeProvider([limited(), "second"])
+    router, sink = make_router(provider)
     response = router.invoke("generate", MESSAGES, "sys", CallContext())
     assert response.answer == "second"
+    assert provider.models == [MODEL_A, MODEL_B]
     assert [(r.model_id, r.outcome) for r in sink.logs] == [
         (MODEL_A, "rate_limited"),
         (MODEL_B, "ok"),
@@ -119,36 +91,43 @@ def test_invoke_falls_back_to_next_model_on_rate_limit():
 
 
 def test_invoke_raises_llm_unavailable_when_every_model_fails():
-    providers = {MODEL_A: FakeProvider([http_error(503)]), MODEL_B: FakeProvider([http_error(500)])}
-    router, _ = make_router(providers)
+    router, _ = make_router(FakeProvider([down(503), down(500)]))
     with pytest.raises(LLMUnavailable):
         router.invoke("generate", MESSAGES, "sys", CallContext())
 
 
 def test_invoke_raises_llm_unavailable_when_purpose_has_no_model():
-    router, _ = make_router({MODEL_A: FakeProvider([])})
+    router, _ = make_router(FakeProvider([]))
     with pytest.raises(LLMUnavailable):
         router.invoke("answer", MESSAGES, "sys", CallContext())
 
 
 def test_daily_cap_blocks_service_until_next_reset_and_raises():
-    provider = FakeProvider([rate_limit("free-models-per-day exhausted")])
-    router, sink = make_router({MODEL_A: provider, MODEL_B: FakeProvider(["unused"])})
+    provider = FakeProvider([capped(), "unused"])
+    router, sink = make_router(provider)
     with pytest.raises(QuotaExhausted) as raised:
         router.invoke("generate", MESSAGES, "sys", CallContext())
     until = datetime(2026, 11, 17, 0, 0, tzinfo=UTC)
     assert raised.value.blocked_until == until
     assert sink.blocked_until("openrouter") == until
     assert [r.outcome for r in sink.logs] == ["quota_exhausted"]
+    assert provider.models == [MODEL_A]
+
+
+def test_quota_block_uses_the_provider_name():
+    router, sink = make_router(FakeProvider([capped()], name="openai"))
+    with pytest.raises(QuotaExhausted):
+        router.invoke("generate", MESSAGES, "sys", CallContext())
+    assert router.service == "openai"
+    assert sink.blocked_until("openai") is not None
+    assert sink.blocked_until("openrouter") is None
 
 
 def test_next_reset_is_strictly_after_now_when_now_is_the_reset_hour():
-    provider = FakeProvider([rate_limit("free-models-per-day")])
     router = ModelRouter(
-        provider_for=lambda _: provider,
+        llm=FakeProvider([capped()]),
         models={"generate": [MODEL_A]},
         sink=FakeSink(),
-        daily_cap_pattern=PATTERN,
         reset_hour_utc=15,
         now=lambda: NOW,
     )
@@ -159,7 +138,7 @@ def test_next_reset_is_strictly_after_now_when_now_is_the_reset_hour():
 
 def test_active_block_raises_quota_exhausted_without_calling_provider():
     provider = FakeProvider(["never"])
-    router, sink = make_router({MODEL_A: provider})
+    router, sink = make_router(provider)
     until = datetime(2026, 11, 17, 0, 0, tzinfo=UTC)
     sink.block("openrouter", until, "cap")
     with pytest.raises(QuotaExhausted) as raised:
@@ -169,15 +148,15 @@ def test_active_block_raises_quota_exhausted_without_calling_provider():
 
 
 def test_expired_block_is_ignored():
-    router, sink = make_router({MODEL_A: FakeProvider(["fine"])})
+    router, sink = make_router(FakeProvider(["fine"]))
     sink.block("openrouter", datetime(2026, 11, 16, 14, 0, tzinfo=UTC), "old")
     assert router.invoke("generate", MESSAGES, "sys", CallContext()).answer == "fine"
 
 
 def test_budget_take_raises_after_limit_and_counts_failed_calls():
     budget = CallBudget(limit=2, used=0)
-    providers = {MODEL_A: FakeProvider([http_error(500), "ok", "never"])}
-    router, _ = make_router(providers)
+    provider = FakeProvider([down(500), "ok", "never"])
+    router, _ = make_router(provider)
     ctx = CallContext(budget=budget)
     with pytest.raises(LLMUnavailable):
         router.invoke_model(MODEL_A, "generate", MESSAGES, "sys", ctx)
@@ -187,11 +166,26 @@ def test_budget_take_raises_after_limit_and_counts_failed_calls():
     with pytest.raises(LLMBudgetExceeded):
         router.invoke_model(MODEL_A, "generate", MESSAGES, "sys", ctx)
     assert budget.used == 2
-    assert len(providers[MODEL_A].calls) == 2
+    assert len(provider.calls) == 2
+
+
+def test_router_passes_the_timeout_of_the_purpose():
+    provider = FakeProvider(["a", "b"])
+    router, _ = make_router(provider, timeouts={"generate": 90.0})
+    router.invoke("generate", MESSAGES, "sys", CallContext())
+    list(router.stream("generate", MESSAGES, "sys", CallContext()))
+    assert provider.timeouts == [90.0, 90.0]
+
+
+def test_purpose_without_timeout_sends_none():
+    provider = FakeProvider(["a"])
+    router, _ = make_router(provider)
+    router.invoke("generate", MESSAGES, "sys", CallContext())
+    assert provider.timeouts == [None]
 
 
 def test_every_call_is_logged_with_outcome_and_tokens():
-    router, sink = make_router({MODEL_A: FakeProvider(["hello"])})
+    router, sink = make_router(FakeProvider(["hello"]))
     ids = CallContext(trip_id=None, conversation_id=None, message_id=None)
     router.invoke("generate", MESSAGES, "sys", ids)
     (record,) = sink.logs
@@ -202,8 +196,7 @@ def test_every_call_is_logged_with_outcome_and_tokens():
 
 
 def test_every_call_writes_one_log_line_naming_the_step_model_and_outcome(caplog):
-    providers = {MODEL_A: FakeProvider([rate_limit()]), MODEL_B: FakeProvider(["second"])}
-    router, _ = make_router(providers)
+    router, _ = make_router(FakeProvider([limited(), "second"]))
     with caplog.at_level(logging.INFO, logger="models.model_router"):
         router.invoke("generate", MESSAGES, "secret prompt", CallContext())
     lines = [r.getMessage() for r in caplog.records]
@@ -217,18 +210,17 @@ def test_every_call_writes_one_log_line_naming_the_step_model_and_outcome(caplog
     assert all("secret prompt" not in line for line in lines)
 
 
-def test_failed_call_log_keeps_error_text_without_prompt():
-    router, sink = make_router({MODEL_A: FakeProvider([http_error(502)])})
+def test_failed_call_log_keeps_the_provider_error_text_without_prompt():
+    router, sink = make_router(FakeProvider([down(502)]), models=(MODEL_A,))
     with pytest.raises(LLMUnavailable):
         router.invoke("generate", MESSAGES, "secret prompt", CallContext())
     (record,) = sink.logs
     assert record.outcome == "provider_error"
-    assert record.error is not None and "502" in record.error
-    assert "secret prompt" not in record.error
+    assert record.error == "OpenRouterDefaultError: 502 oops"
 
 
 def test_stream_yields_text_chunks():
-    router, sink = make_router({MODEL_A: FakeProvider(["a long streamed answer"])})
+    router, sink = make_router(FakeProvider(["a long streamed answer"]))
     chunks = list(router.stream("generate", MESSAGES, "sys", CallContext()))
     assert len(chunks) > 1
     assert "".join(chunks) == "a long streamed answer"
@@ -236,83 +228,92 @@ def test_stream_yields_text_chunks():
 
 
 def test_stream_falls_back_before_first_token_only():
-    providers = {MODEL_A: FakeProvider([rate_limit()]), MODEL_B: FakeProvider(["from b"])}
-    router, _ = make_router(providers)
+    router, _ = make_router(FakeProvider([limited(), "from b"]))
     assert "".join(router.stream("generate", MESSAGES, "sys", CallContext())) == "from b"
 
-    broken = {MODEL_A: BrokenStream("part ", http_error(502)), MODEL_B: FakeProvider(["from b"])}
-    router, sink = make_router(broken)
+    router, sink = make_router(BrokenStream("part ", down(502)))
     seen: list[str] = []
     with pytest.raises(LLMUnavailable):
         for chunk in router.stream("generate", MESSAGES, "sys", CallContext()):
             seen.append(chunk)
     assert seen == ["part "]
-    assert [r.model_id for r in sink.logs] == [MODEL_A]
+    assert [(r.model_id, r.outcome) for r in sink.logs] == [(MODEL_A, "provider_error")]
 
 
 def test_stream_daily_cap_blocks_and_raises():
-    router, sink = make_router({MODEL_A: FakeProvider([rate_limit("free-models-per-day")])})
+    router, sink = make_router(FakeProvider([capped()]))
     with pytest.raises(QuotaExhausted):
         list(router.stream("generate", MESSAGES, "sys", CallContext()))
     assert sink.blocked_until("openrouter") == datetime(2026, 11, 17, 0, 0, tzinfo=UTC)
 
 
-def test_router_provider_goes_through_fallback_and_logging():
-    providers = {MODEL_A: FakeProvider([rate_limit()]), MODEL_B: FakeProvider(["routed"])}
-    router, sink = make_router(providers)
-    adapter = RouterProvider(router, "generate", CallContext())
-    response = adapter.invoke(MESSAGES, "sys")
-    assert response.answer == "routed"
-    assert adapter.model_id == MODEL_B
-    assert len(sink.logs) == 2
-
-
-def test_router_provider_streams_text_deltas():
-    router, _ = make_router({MODEL_A: FakeProvider(["streamed text"])})
-    adapter = RouterProvider(router, "generate", CallContext())
-    assert "".join(c.delta or "" for c in adapter.invoke_stream(MESSAGES, "sys")) == "streamed text"
-
-
 def test_model_without_json_support_falls_back_to_next_model():
-    providers = {MODEL_A: FakeProvider([no_endpoints()]), MODEL_B: FakeProvider(['{"a": 1}'])}
-    router, sink = make_router(providers)
+    no_endpoints = ProviderCallError("provider_error", "NotFoundResponseError: No endpoints found")
+    provider = FakeProvider([no_endpoints, '{"a": 1}'])
+    router, sink = make_router(provider)
     json_object = {"type": "json_object"}
     response = router.invoke("generate", MESSAGES, "sys", CallContext(), json_object)
     assert response.answer == '{"a": 1}'
-    assert providers[MODEL_B].formats == [json_object]
+    assert provider.formats == [json_object, json_object]
     assert [(r.model_id, r.outcome) for r in sink.logs] == [
         (MODEL_A, "provider_error"),
         (MODEL_B, "ok"),
     ]
 
 
-# Records the keyword arguments of chat.send and answers with a fixed message
-class RecordingChat:
-    def __init__(self) -> None:
-        self.kwargs: dict[str, Any] = {}
-
-    def send(self, **kwargs: Any) -> Any:
-        self.kwargs = kwargs
-        message = SimpleNamespace(content="{}", tool_calls=None)
-        usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1)
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
-
-
-def openrouter_with(chat: RecordingChat) -> OpenRouterProvider:
-    provider = OpenRouterProvider(MODEL_A, {})
-    provider.client = SimpleNamespace(chat=chat)  # type: ignore[assignment]
-    return provider
+def make_embed_router(
+    provider: LLMProvider, timeouts: Mapping[Purpose, float] | None = None
+) -> tuple[ModelRouter, FakeSink]:
+    sink = FakeSink()
+    router = ModelRouter(
+        llm=provider,
+        models={"embed": [EMBED_A, EMBED_B]},
+        sink=sink,
+        reset_hour_utc=0,
+        now=lambda: NOW,
+        timeouts=timeouts,
+    )
+    return router, sink
 
 
-def test_openrouter_json_request_requires_support_and_heals_the_reply():
-    chat = RecordingChat()
-    openrouter_with(chat).invoke(MESSAGES, "sys", response_format={"type": "json_object"})
-    assert chat.kwargs["response_format"] == {"type": "json_object"}
-    assert chat.kwargs["provider"] == {"require_parameters": True}
-    assert chat.kwargs["plugins"] == [{"id": "response-healing"}]
+EMBED_A = ModelId.NEMOTRON_3_EMBED_1B
+EMBED_B = ModelId.LFM_2_5_EMBEDDING_350M
 
 
-def test_openrouter_text_request_sends_no_json_options():
-    chat = RecordingChat()
-    openrouter_with(chat).invoke(MESSAGES, "sys")
-    assert not {"response_format", "provider", "plugins"} & chat.kwargs.keys()
+def test_embed_falls_back_logs_and_passes_the_embed_timeout():
+    provider = FakeProvider([limited(), [[1.0, 0.0], [0.0, 1.0]]])
+    router, sink = make_embed_router(provider, timeouts={"embed": 30.0})
+    assert router.embed(["a", "b"], CallContext()) == [[1.0, 0.0], [0.0, 1.0]]
+    assert provider.models == [EMBED_A, EMBED_B] and provider.timeouts == [30.0, 30.0]
+    assert [(r.purpose, r.model_id, r.outcome, r.input_tokens) for r in sink.logs] == [
+        ("embed", EMBED_A, "rate_limited", None),
+        ("embed", EMBED_B, "ok", 2),
+    ]
+
+
+def test_embed_with_a_model_calls_only_that_model():
+    provider = FakeProvider([[[1.0]]])
+    router, _ = make_embed_router(provider)
+    assert router.embed(["a"], CallContext(), model_id=EMBED_B) == [[1.0]]
+    assert provider.models == [EMBED_B]
+
+
+def test_embed_quota_blocks_and_counts_the_budget():
+    budget = CallBudget(limit=5)
+    router, sink = make_embed_router(FakeProvider([capped(), [[1.0]]]))
+    with pytest.raises(QuotaExhausted):
+        router.embed(["a"], CallContext(budget=budget))
+    assert sink.blocked_until("openrouter") is not None and budget.used == 1
+
+
+def test_embed_with_a_wrong_vector_count_is_invalid_output_and_falls_back():
+    provider = FakeProvider([[[1.0]], [[1.0], [2.0]]])
+    router, sink = make_embed_router(provider)
+    assert router.embed(["a", "b"], CallContext()) == [[1.0], [2.0]]
+    assert [r.outcome for r in sink.logs] == ["invalid_output", "ok"]
+
+
+def test_embed_on_a_provider_without_embeddings_is_unavailable():
+    router, _ = make_embed_router(BrokenStream("x", down()))
+    with pytest.raises(LLMUnavailable, match="no embedding"):
+        router.embed(["a"], CallContext())

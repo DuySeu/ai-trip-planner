@@ -309,3 +309,25 @@ def test_discover_suggestions_message_is_saved(db_conn):
         {"kind": "suggestions", "cards": []},
     )
     assert row.metadata == {"kind": "suggestions", "cards": []}
+
+
+def test_quota_blocks_accept_every_llm_provider_and_tavily_only(db_conn):
+    for service in ("openrouter", "openai", "bedrock", "tavily"):
+        db_conn.execute(
+            "INSERT INTO quota_blocks (service, blocked_until, reason) VALUES (%s, now(), 'cap')",
+            (service,),
+        )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        db_conn.execute(
+            "INSERT INTO quota_blocks (service, blocked_until, reason) VALUES ('other', now(), 'x')"
+        )
+
+
+def test_llm_calls_accept_the_embed_purpose(db_conn):
+    db_conn.execute(
+        "INSERT INTO llm_calls (purpose, model_id, outcome) VALUES ('embed', 'e/one:free', 'ok')"
+    )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        db_conn.execute(
+            "INSERT INTO llm_calls (purpose, model_id, outcome) VALUES ('other', 'm', 'ok')"
+        )

@@ -72,3 +72,44 @@ def test_db_conninfo_uses_every_db_variable_and_can_switch_database():
 def test_load_db_settings_needs_only_db_variables():
     db = load_db_settings({"DB_USER": "u", "DB_PASSWORD": "p", "DB_NAME": "n"})
     assert db.name == "n"
+
+
+WITHOUT_OPENROUTER_KEY = {k: v for k, v in MIN_ENV.items() if k != "OPENROUTER_API_KEY"}
+
+
+def test_llm_provider_defaults_to_openrouter_with_4096_output_tokens():
+    s = load_settings(MIN_ENV)
+    assert (s.llm_provider, s.max_output_tokens) == ("openrouter", 4096)
+
+
+@pytest.mark.parametrize("value", ["anthropic", "OpenAI"])
+def test_load_settings_rejects_unknown_llm_provider(value):
+    with pytest.raises(ValueError, match="LLM_PROVIDER"):
+        load_settings({**MIN_ENV, "LLM_PROVIDER": value})
+
+
+def test_load_settings_needs_the_key_of_the_chosen_provider():
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        load_settings(WITHOUT_OPENROUTER_KEY)
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        load_settings({**WITHOUT_OPENROUTER_KEY, "LLM_PROVIDER": "openai"})
+    openai_env = {**WITHOUT_OPENROUTER_KEY, "LLM_PROVIDER": "openai", "OPENAI_API_KEY": "k"}
+    assert load_settings(openai_env).llm_provider == "openai"
+
+
+def test_bedrock_needs_no_key():
+    env = {**WITHOUT_OPENROUTER_KEY, "LLM_PROVIDER": "bedrock"}
+    assert load_settings(env).llm_provider == "bedrock"
+
+
+def test_provider_problem_is_reported_with_the_other_problems():
+    env = {k: v for k, v in WITHOUT_OPENROUTER_KEY.items() if k != "TAVILY_API_KEY"}
+    with pytest.raises(ValueError) as e:
+        load_settings(env)
+    assert "TAVILY_API_KEY" in str(e.value) and "OPENROUTER_API_KEY" in str(e.value)
+
+
+def test_embedding_models_are_optional_and_parsed_like_the_other_chains():
+    assert load_settings(MIN_ENV).embedding_models == ()
+    env = {**MIN_ENV, "EMBEDDING_MODELS": "e/one:free, e/two:free"}
+    assert load_settings(env).embedding_models == ("e/one:free", "e/two:free")

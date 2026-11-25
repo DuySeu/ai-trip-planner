@@ -1,5 +1,4 @@
-from .base import LLMProvider, LLMResponse, Message, StreamChunk
-from .llm_factory import LLM
+from .llm_factory import LLMProvider, LLMResponse, Message, StreamChunk
 from .provider import BedrockProvider, OpenAIProvider, OpenRouterProvider
 
 __all__ = [
@@ -10,5 +9,4 @@ __all__ = [
     "OpenAIProvider",
     "OpenRouterProvider",
     "BedrockProvider",
-    "LLM",
 ]

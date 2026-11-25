@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
-import httpx
 import pytest
-from openrouter import errors
 from pydantic import BaseModel
 
 from core.constants import ModelId
 from core.exceptions import InvalidLLMOutput, LLMBudgetExceeded, LLMUnavailable, QuotaExhausted
+from models.llm_factory import ProviderCallError
 from models.model_router import CallBudget, CallContext, ModelRouter, call_json, extract_json_object
 from tests.fakes import FakeProvider, FakeSink
 
@@ -16,19 +16,20 @@ MODEL_A = ModelId.GEMMA_4_31B_IT
 MODEL_B = ModelId.NEMOTRON_3_SUPER_120B_A12B
 MESSAGES = [{"role": "user", "content": "give me a"}]
 CTX = CallContext()
+BOTH = (MODEL_A, MODEL_B)
+DOWN = ProviderCallError("provider_error", "OpenRouterDefaultError: 503 down")
 
 
 class Answer(BaseModel):
     a: int
 
 
-def make_router(*providers: FakeProvider) -> ModelRouter:
-    by_id = dict(zip((MODEL_A, MODEL_B), providers, strict=False))
+# One provider for every model; the chain is MODEL_A, or MODEL_A then MODEL_B
+def make_router(provider: FakeProvider, models: Sequence[str] = (MODEL_A,)) -> ModelRouter:
     return ModelRouter(
-        provider_for=lambda model_id: by_id[model_id],
-        models={"generate": list(by_id), "repair": list(by_id)},
+        llm=provider,
+        models={"generate": list(models), "repair": list(models)},
         sink=FakeSink(),
-        daily_cap_pattern="free-models-per-day",
         reset_hour_utc=0,
         now=lambda: datetime(2026, 11, 16, 15, 0, tzinfo=UTC),
     )
@@ -81,40 +82,35 @@ def test_semantic_check_errors_trigger_repair_with_those_errors():
 
 
 def test_second_failure_moves_to_next_model():
-    first = FakeProvider(["junk", "more junk"])
-    second = FakeProvider(['{"a": 3}'])
-    result = run(make_router(first, second))
+    provider = FakeProvider(["junk", "more junk", '{"a": 3}'])
+    result = run(make_router(provider, BOTH))
     assert (result.value, result.model_id) == (Answer(a=3), MODEL_B)
-    assert len(first.calls) == 2
+    assert provider.models == [MODEL_A, MODEL_A, MODEL_B]
 
 
 def test_unavailable_model_moves_to_next_model():
-    down = errors.OpenRouterDefaultError("x", httpx.Response(503, text="down"))
-    result = run(make_router(FakeProvider([down]), FakeProvider(['{"a": 3}'])))
+    result = run(make_router(FakeProvider([DOWN, '{"a": 3}']), BOTH))
     assert result.model_id == MODEL_B
 
 
 def test_all_models_failing_raises_invalid_llm_output_with_last_errors():
-    router = make_router(FakeProvider(["x", "y"]), FakeProvider(["z", '{"a": "bad"}']))
+    router = make_router(FakeProvider(["x", "y", "z", '{"a": "bad"}']), BOTH)
     with pytest.raises(InvalidLLMOutput) as raised:
         run(router)
     assert raised.value.errors and raised.value.errors[0].startswith("a:")
 
 
 def test_every_model_unavailable_raises_llm_unavailable():
-    down = errors.OpenRouterDefaultError("x", httpx.Response(503, text="down"))
     with pytest.raises(LLMUnavailable):
-        run(make_router(FakeProvider([down]), FakeProvider([down])))
+        run(make_router(FakeProvider([DOWN, DOWN]), BOTH))
 
 
 def test_quota_exhausted_is_not_swallowed():
-    cap = errors.OpenRouterDefaultError(
-        "x", httpx.Response(429, text="free-models-per-day reached")
-    )
-    second = FakeProvider(['{"a": 1}'])
+    cap = ProviderCallError("quota_exhausted", "429 free-models-per-day reached")
+    provider = FakeProvider([cap, '{"a": 1}'])
     with pytest.raises(QuotaExhausted):
-        run(make_router(FakeProvider([cap]), second))
-    assert second.calls == []
+        run(make_router(provider, BOTH))
+    assert provider.models == [MODEL_A]
 
 
 def test_budget_exceeded_is_not_swallowed_and_repair_counts_as_a_call():
@@ -154,3 +150,17 @@ def test_repair_call_keeps_the_same_response_format():
     run(make_router(provider))
     assert provider.formats[0] == provider.formats[1]
     assert provider.formats[0] is not None
+
+
+def test_repair_call_keeps_the_timeout_of_the_original_purpose():
+    provider = FakeProvider(['{"a": "x"}', '{"a": 1}'])
+    router = ModelRouter(
+        llm=provider,
+        models={"suggest": [MODEL_A], "repair": [MODEL_A]},
+        sink=FakeSink(),
+        reset_hour_utc=0,
+        now=lambda: datetime(2026, 11, 16, 15, 0, tzinfo=UTC),
+        timeouts={"suggest": 30.0, "repair": 90.0},
+    )
+    call_json(router, "suggest", "sys", MESSAGES, Answer, None, CTX)
+    assert provider.timeouts == [30.0, 30.0]

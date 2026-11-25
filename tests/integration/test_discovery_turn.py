@@ -76,10 +76,9 @@ class Rig:
         self.provider = FakeProvider(script)
         self.search = search
         router = ModelRouter(
-            provider_for=lambda model_id: self.provider,
+            llm=self.provider,
             models={p: [MODEL] for p in ("classify", "discover", "suggest", "repair")},  # type: ignore[misc]
             sink=FakeSink(),
-            daily_cap_pattern="free-models-per-day",
             reset_hour_utc=0,
             now=lambda: NOW,
         )

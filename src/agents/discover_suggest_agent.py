@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
+from agents.base_agent import BaseAgent
 from core.prompts import discovery_suggest_prompt
 from domain.discovery import (
     HIDDEN_FIELDS,
@@ -17,13 +18,10 @@ from domain.discovery import (
     discovery_content,
     usable_cards,
 )
-from models.model_router import CallContext, ModelRouter, call_json, compact_schema
+from models.model_router import CallContext
 
 
-class DiscoverSuggestAgent:
-    def __init__(self, router: ModelRouter) -> None:
-        self.router = router
-
+class DiscoverSuggestAgent(BaseAgent):
     # Write the reply and the cards from the sources; known_source_ids are the ids the research holds
     # conversation is the rendered <conversation> block, "" when there is none
     def run(
@@ -45,19 +43,15 @@ class DiscoverSuggestAgent:
                 "the place is in"
             ]
 
-        system = discovery_suggest_prompt.format(
-            schema=compact_schema(SuggestionsReply, HIDDEN_FIELDS)
-        )
         content = discovery_content(today, draft, conversation, message, sources)
-        reply = call_json(
-            self.router,
+        reply = self.ask_json(
             "suggest",
-            system,
-            [{"role": "user", "content": content}],
+            discovery_suggest_prompt,
             SuggestionsReply,
-            check,
+            content,
             ctx,
+            check,
             HIDDEN_FIELDS,
-        ).value
+        )
         cards = usable_cards(reply.cards, known_source_ids)[:MAX_CARDS]
         return reply.model_copy(update={"cards": cards})

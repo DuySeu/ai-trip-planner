@@ -10,7 +10,8 @@ Tạo file cấu hình ở root rồi điền các giá trị:
 cp .env.example .env
 ```
 
-- Bắt buộc: `DB_*`, `OPENROUTER_API_KEY`, `TAVILY_API_KEY`, `PLANNER_MODELS`, `CHAT_MODELS`, `CLASSIFIER_MODELS` (model id lấy trong `src/core/constants.py`), `DAILY_LLM_CEILING_NEW_TRIPS`, `DAILY_LLM_CEILING_CHAT`, `DAILY_TAVILY_CEILING`. Các biến còn lại có mặc định trong `src/core/settings.py`.
+- Bắt buộc: `DB_*`, `TAVILY_API_KEY`, `PLANNER_MODELS`, `CHAT_MODELS`, `CLASSIFIER_MODELS`, `DAILY_LLM_CEILING_NEW_TRIPS`, `DAILY_LLM_CEILING_CHAT`, `DAILY_TAVILY_CEILING`, và key của provider đang chọn. Các biến còn lại có mặc định trong `src/core/settings.py`.
+- `LLM_PROVIDER` chọn provider cho cả app: `openrouter` (mặc định, cần `OPENROUTER_API_KEY`), `openai` (cần `OPENAI_API_KEY`) hoặc `bedrock` (chỉ model Claude; dùng `AWS_*` hoặc chuỗi credential mặc định của AWS). Các chuỗi `*_MODELS` phải là model id của provider đó; với OpenRouter, id lấy trong `src/core/constants.py`. Đổi provider chỉ cần sửa `.env` rồi chạy lại API và worker.
 - `DAILY_LLM_CEILING_CHAT` phải lớn hơn `DAILY_LLM_CEILING_NEW_TRIPS`, nếu không API và worker sẽ dừng ngay khi khởi động. Cả hai cùng so với tổng số lần gọi LLM trong ngày; phần chênh lệch là quota dành riêng cho chat.
 - Để `DB_HOST=localhost`. Khi chạy trong Docker, compose tự đổi thành `db`, nên một file `.env` dùng được cho cả dev và production.
 

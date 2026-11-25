@@ -28,10 +28,9 @@ CTX = CallContext()
 def make_router(provider: FakeProvider) -> tuple[ModelRouter, FakeSink]:
     sink = FakeSink()
     router = ModelRouter(
-        provider_for=lambda model_id: provider,
+        llm=provider,
         models={"discover": [MODEL], "suggest": [MODEL], "repair": [MODEL]},
         sink=sink,
-        daily_cap_pattern="free-models-per-day",
         reset_hour_utc=0,
         now=lambda: datetime(2026, 11, 17, 15, 0, tzinfo=UTC),
     )

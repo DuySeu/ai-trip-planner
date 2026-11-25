@@ -19,6 +19,10 @@ BOOL_VALUES = {
     "off": False,
 }
 
+LLM_PROVIDERS = ("openrouter", "openai", "bedrock")
+# The key each provider needs; Bedrock may use boto3's default credential chain instead
+PROVIDER_KEYS = {"openrouter": "OPENROUTER_API_KEY", "openai": "OPENAI_API_KEY"}
+
 PARSERS: dict[str, Callable[[str], Any]] = {
     "str": str,
     "int": int,
@@ -54,7 +58,6 @@ class DbSettings:
 @dataclass(frozen=True)
 class Settings:
     db: DbSettings
-    openrouter_api_key: str
     tavily_api_key: str
     planner_models: tuple[str, ...]
     chat_models: tuple[str, ...]
@@ -78,6 +81,12 @@ class Settings:
     user_trips_per_day: int = 5
     user_chat_per_day: int = 100
     template_path: str = "data/trip-template.xlsx"
+    # One provider for the whole app; the *_MODELS lists hold that provider's model ids
+    llm_provider: str = "openrouter"
+    # Output token limit, sent only where the API requires one (Bedrock)
+    max_output_tokens: int = 4096
+    # Embedding model ids of the provider, in fallback order; only an embedding guard needs them
+    embedding_models: tuple[str, ...] = ()
 
 
 # Read only the DB_* variables (for migrations and tests, which need no API keys)
@@ -92,7 +101,7 @@ def load_db_settings(env: Mapping[str, str]) -> DbSettings:
 def load_settings(env: Mapping[str, str]) -> Settings:
     db_values, db_problems = _read_fields(DbSettings, env, prefix="DB_")
     values, problems = _read_fields(Settings, env, prefix="", skip={"db"})
-    problems = db_problems + problems
+    problems = db_problems + problems + _provider_problems(env)
     if problems:
         raise ValueError(f"Invalid settings: {'; '.join(problems)}")
 
@@ -103,6 +112,17 @@ def load_settings(env: Mapping[str, str]) -> Settings:
             "DAILY_LLM_CEILING_NEW_TRIPS"
         )
     return settings
+
+
+# A provider that does not exist, or the chosen provider's missing key
+def _provider_problems(env: Mapping[str, str]) -> list[str]:
+    provider = env.get("LLM_PROVIDER", "").strip() or "openrouter"
+    if provider not in LLM_PROVIDERS:
+        return [f"LLM_PROVIDER={provider!r} is not one of {', '.join(LLM_PROVIDERS)}"]
+    key = PROVIDER_KEYS.get(provider)
+    if key and not env.get(key, "").strip():
+        return [f"missing {key} (LLM_PROVIDER={provider})"]
+    return []
 
 
 # Parse a dataclass's fields from env as PREFIX + FIELD_NAME; return values and problems

@@ -23,10 +23,9 @@ CTX = CallContext()
 # A router whose only model answers from the provider
 def make_router(provider: FakeProvider) -> ModelRouter:
     return ModelRouter(
-        provider_for=lambda model_id: provider,
+        llm=provider,
         models={"edit": [MODEL], "repair": [MODEL]},
         sink=FakeSink(),
-        daily_cap_pattern="free-models-per-day",
         reset_hour_utc=0,
         now=lambda: datetime(2026, 11, 16, 15, 0, tzinfo=UTC),
     )

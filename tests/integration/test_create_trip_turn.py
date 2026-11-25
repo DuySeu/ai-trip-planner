@@ -75,10 +75,9 @@ class Rig:
             return list(found)
 
         router = ModelRouter(
-            provider_for=lambda model_id: self.provider,
+            llm=self.provider,
             models={purpose: [MODEL] for purpose in PURPOSES},  # type: ignore[misc]
             sink=FakeSink(),
-            daily_cap_pattern="free-models-per-day",
             reset_hour_utc=0,
             now=lambda: NOW,
         )
