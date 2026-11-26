@@ -44,8 +44,8 @@ class TripSummary(BaseModel):
 class TripOut(TripSummary):
     origin: str
     travel_styles: list[str]
-    budget_amount: Decimal
-    budget_scope: str
+    budget_amount: Decimal | None
+    budget_scope: str | None
     local_currency: str | None
     language: str
     notes: str | None

@@ -109,6 +109,13 @@ def test_trip_rejects_unknown_style_and_empty_styles(db_conn):
         insert_trip(db_conn, user, travel_styles=[])
 
 
+def test_trip_budget_amount_and_scope_are_null_together(db_conn):
+    user = insert_user(db_conn, "a")
+    insert_trip(db_conn, user, budget_amount=None, budget_scope=None)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        insert_trip(db_conn, user, budget_amount=None)
+
+
 def test_trips_have_no_group_transport_or_conversation_column(db_conn):
     columns = {
         row[0]

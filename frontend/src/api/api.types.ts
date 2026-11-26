@@ -180,8 +180,9 @@ export interface Trip {
   end_date: string;
   travelers: number;
   travel_styles: TravelStyle[];
-  budget_amount: string;
-  budget_scope: BudgetScope;
+  // Both null: the visitor left the budget to the AI
+  budget_amount: string | null;
+  budget_scope: BudgetScope | null;
   local_currency: string | null;
   language: Language;
   notes: string | null;
@@ -216,8 +217,9 @@ export interface CreateTripBody {
   end_date: string;
   travelers: number;
   travel_styles: TravelStyle[];
-  budget_amount: string;
-  budget_scope: BudgetScope;
+  // Both null: the visitor left the budget to the AI
+  budget_amount: string | null;
+  budget_scope: BudgetScope | null;
   language: Language;
   notes: string | null;
   // The chat trip form this trip is made from

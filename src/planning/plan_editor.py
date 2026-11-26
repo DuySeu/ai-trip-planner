@@ -74,6 +74,13 @@ def compact_plan(plan: Plan) -> str:
     return "\n".join(lines)
 
 
+# The budget as the visitor gave it; none when the planner suggested it
+def _budget(request: TripRequest) -> str:
+    if request.budget_amount is None:
+        return "none given"
+    return f"{_amount(request.budget_amount)} VND {request.budget_scope}"
+
+
 # The trip request as short lines for the prompt
 def _request_text(request: TripRequest) -> str:
     return (
@@ -82,7 +89,7 @@ def _request_text(request: TripRequest) -> str:
         f"dates: {request.start_date.isoformat()} to {request.end_date.isoformat()}\n"
         f"travelers: {request.travelers}\n"
         f"styles: {', '.join(request.travel_styles)}\n"
-        f"budget: {_amount(request.budget_amount)} VND {request.budget_scope}\n"
+        f"budget: {_budget(request)}\n"
         f"language: {request.language}"
     )
 

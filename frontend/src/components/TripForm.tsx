@@ -241,24 +241,9 @@ export function TripForm({
       </fieldset>
 
       <div className={PAIR}>
-        <div className={FIELD}>
-          <label className={LABEL} htmlFor="trip-budget_amount">
-            {t("form.budget")}
-          </label>
-          <input
-            id="trip-budget_amount"
-            className={`${INPUT} tabular-nums`}
-            inputMode="numeric"
-            autoComplete="off"
-            value={budgetDisplay}
-            onChange={(event) => set("budget_amount", event.target.value.replace(/\D/g, "").replace(/^0+(?=\d)/, ""))}
-            {...describe("budget_amount")}
-          />
-          {errorFor("budget_amount")}
-        </div>
         <fieldset className={FIELDSET}>
           <legend className={LEGEND}>{t("form.budgetScope")}</legend>
-          <div className="flex min-h-11 flex-wrap items-center gap-4">
+          <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2">
             {(["per_person", "total"] as const).map((scope) => (
               <label key={scope} className="inline-flex cursor-pointer items-center gap-2">
                 <input
@@ -266,14 +251,45 @@ export function TripForm({
                   className="size-5 accent-primary"
                   name="budget_scope"
                   value={scope}
-                  checked={values.budget_scope === scope}
-                  onChange={() => set("budget_scope", scope)}
+                  checked={!values.budget_auto && values.budget_scope === scope}
+                  onChange={() => setValues((prev) => ({ ...prev, budget_scope: scope, budget_auto: false }))}
                 />
                 {t(scope === "per_person" ? "form.perPerson" : "form.total")}
               </label>
             ))}
+            <label className="inline-flex cursor-pointer items-center gap-2">
+              <input
+                id="trip-budget_auto"
+                type="radio"
+                className="size-5 accent-primary"
+                name="budget_scope"
+                value="auto"
+                checked={values.budget_auto}
+                onChange={() => set("budget_auto", true)}
+              />
+              {t("form.budgetAuto")}
+            </label>
           </div>
         </fieldset>
+        {values.budget_auto ? (
+          <p className={`${HELP} self-center`}>{t("form.budgetAutoHint")}</p>
+        ) : (
+          <div className={FIELD}>
+            <label className={LABEL} htmlFor="trip-budget_amount">
+              {t("form.budget")}
+            </label>
+            <input
+              id="trip-budget_amount"
+              className={`${INPUT} tabular-nums`}
+              inputMode="numeric"
+              autoComplete="off"
+              value={budgetDisplay}
+              onChange={(event) => set("budget_amount", event.target.value.replace(/\D/g, "").replace(/^0+(?=\d)/, ""))}
+              {...describe("budget_amount")}
+            />
+            {errorFor("budget_amount")}
+          </div>
+        )}
       </div>
 
       <div className={FIELD}>

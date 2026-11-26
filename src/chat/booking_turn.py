@@ -18,7 +18,7 @@ from chat.handlers import ChatContext, build_prompt, localized, sources_text
 from core.exceptions import ResearchFailed
 from db.repositories import conversations, messages, research
 from db.repositories.research import SourceInput, SourceRow
-from domain.booking import BookingDates, BookingKind, dates_errors, dates_from
+from domain.booking import BookingDates, BookingKind, dates_errors, dates_from, dates_in_text
 from domain.discovery import RequestDraft, merge_draft
 from domain.flights import flight_cards_out
 from domain.hotels import hotel_cards_out
@@ -40,9 +40,10 @@ ASK_DATES: dict[BookingKind, tuple[str, str]] = {
 SEARCH_TASK: dict[BookingKind, Any] = {"hotel": "accommodation", "flight": "transport"}
 
 
-# Search when the open trip or the draft gives dates that still keep the rules; else save a
-# need_dates card and send it in one metadata event. A ticket search always has a known origin:
-# the open trip's, else the draft's, else the visitor's current city (or Hà Nội)
+# Search when the message, the open trip or the draft gives dates that still keep the rules; else
+# save a need_dates card and send it in one metadata event. Dates from the message go in the draft
+# when it has none. A ticket search always has a known origin: the open trip's, else the draft's,
+# else the visitor's current city (or Hà Nội)
 def run_booking_turn(
     data: ChatContext,
     turn: ChatTurn,
@@ -53,12 +54,17 @@ def run_booking_turn(
 ) -> Iterator[ChatEvent]:
     with deps.pool.connection() as conn:
         draft = conversations.get_conversation(conn, turn.conversation_id).request_draft or {}
-    dates = dates_from(kind, draft, data.request)
-    origin = _known_origin(data, turn, draft)
     today = today_in_vietnam(deps.now())
+    said = dates_in_text(turn.message.content, today)
+    dates = dates_from(kind, draft, data.request, said)
+    origin = _known_origin(data, turn, draft)
     if dates is None or dates_errors(kind, dates, today):
         yield from _ask_dates(turn, deps, kind, query)
         return
+    learned = _learned_dates(kind, dates, draft) if said else {}
+    if learned:
+        with deps.pool.connection() as conn:
+            conversations.save_draft(conn, turn.conversation_id, {**draft, **learned})
     yield from _search(data, turn, deps, call_ctx, kind, query, dates, origin)
 
 
@@ -75,14 +81,7 @@ def run_booking_follow_up(
         meta = card.metadata or {}
         draft = conversations.get_conversation(conn, turn.conversation_id).request_draft or {}
         kind: BookingKind = meta["kind"]
-        start, end = (
-            (dates.check_in, dates.check_out) if kind == "hotel" else (dates.depart, dates.return_)
-        )
-        learned: dict[str, Any] = {}
-        if not draft.get("start_date") and start is not None:
-            learned = {"start_date": start.isoformat()}
-            if end is not None:
-                learned["end_date"] = end.isoformat()
+        learned = _learned_dates(kind, dates, draft)
         if follow_up.origin and not draft.get("origin"):
             learned["origin"] = follow_up.origin
         if learned:
@@ -198,6 +197,21 @@ def _known_origin(data: ChatContext, turn: ChatTurn, draft: Mapping[str, Any]) -
     if data.request is not None:
         return data.request.origin
     return str(draft.get("origin") or turn.default_origin)
+
+
+# The dates to keep in the draft: none when it already has a start date
+def _learned_dates(
+    kind: BookingKind, dates: BookingDates, draft: Mapping[str, Any]
+) -> dict[str, Any]:
+    start, end = (
+        (dates.check_in, dates.check_out) if kind == "hotel" else (dates.depart, dates.return_)
+    )
+    if draft.get("start_date") or start is None:
+        return {}
+    learned = {"start_date": start.isoformat()}
+    if end is not None:
+        learned["end_date"] = end.isoformat()
+    return learned
 
 
 # Text for matching place names: NFC, no accents (đ as d), lower case, single spaces

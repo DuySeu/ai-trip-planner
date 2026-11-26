@@ -27,7 +27,11 @@ export function PlanView({ trip }: Props) {
   const { plan } = trip;
   const { currencies } = plan;
 
-  const budgetTotal = Number(trip.budget_amount) * (trip.budget_scope === "per_person" ? trip.travelers : 1);
+  // No budget given: the AI's plan total is its suggested budget
+  const isBudgetSuggested = trip.budget_amount === null;
+  const budgetTotal = isBudgetSuggested
+    ? Number(trip.total_cost_vnd ?? 0)
+    : Number(trip.budget_amount) * (trip.budget_scope === "per_person" ? trip.travelers : 1);
   const overBy = Number(trip.total_cost_vnd ?? 0) - budgetTotal;
   const stays = plan.accommodation.toSorted((a, b) => Number(b.chosen) - Number(a.chosen));
 
@@ -56,7 +60,7 @@ export function PlanView({ trip }: Props) {
             <dd className="tabular-nums">{trip.total_cost_vnd === null ? "-" : formatMoney(trip.total_cost_vnd, "VND", lang)}</dd>
           </div>
           <div>
-            <dt>{t("plan.budget")}</dt>
+            <dt>{t(isBudgetSuggested ? "plan.budgetSuggested" : "plan.budget")}</dt>
             <dd className="tabular-nums">{formatMoney(budgetTotal, "VND", lang)}</dd>
           </div>
         </dl>

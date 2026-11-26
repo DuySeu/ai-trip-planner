@@ -42,6 +42,17 @@ describe("NewTripPage", () => {
     expect(created).not.toHaveProperty("conversation_id");
   });
 
+  it("ai_budget_radio_hides_the_amount_and_creates_a_trip_without_budget", async () => {
+    const { user } = renderApp("/trips/new");
+    await pickPlace(user, "da la", /Đà Lạt/);
+    await fillRequired(user);
+    await user.click(screen.getByRole("radio", { name: "Suggested by AI" }));
+    expect(screen.queryByLabelText("Budget (VND)")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Plan this trip" }));
+    await waitFor(() => expect(mockDb.trips.at(-1)).toMatchObject({ destination: { name: "Đà Lạt" }, status: "queued" }));
+    expect(mockDb.trips.at(-1)).toMatchObject({ budget_amount: null, budget_scope: null });
+  });
+
   it("typing_after_picking_clears_the_destination", async () => {
     const { user } = renderApp("/trips/new");
     await pickPlace(user, "da la", /Đà Lạt/);

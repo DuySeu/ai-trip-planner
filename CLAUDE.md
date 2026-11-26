@@ -42,3 +42,16 @@ Chosen flow: a fixed pipeline in code, not an agent loop. Pure `domain` models a
 - Enum-like columns are `text` + `CHECK`, so adding a value is a one-line migration. Business rules the database can hold (30-day trip limit, local currency only abroad, one active job per trip, research rows owned by exactly one of trip or conversation) are constraints, and `tests/integration/test_schema.py` pins them.
 - User names are unique on the generated `name_key = lower(btrim(name))`. This relies on Postgres's builtin `C.UTF-8` locale (set via `POSTGRES_INITDB_ARGS` in `docker-compose.yml`) so Vietnamese capitals fold correctly; app code must NFC-normalize names before insert.
 - A trip holds one plan (`trips.plan` JSONB); every edit or re-plan overwrites it and no history is kept. Writes bump `trips.plan_revision` and apply only if it still equals the client's value. A re-plan's new request waits in `jobs.request` and is written to the trip together with the new plan.
+
+## Docs
+
+`docs/` describes how the code behaves, so a change to that behavior updates the affected docs in the same change. This covers routing, intents, the steps of a flow, what calls the LLM, Tavily or other services and in what order, request and response shapes, and the schema. A pure refactor, a rename with no behavior change, or a test-only change needs no doc edit.
+
+- `docs/api.md`: endpoints, bodies, responses and `messages.metadata` shapes (`src/api`).
+- `docs/chat-intents.md`: `CATALOG`, `AGENT_INTENT`, the guardrail, the rules that override the router, and the `file:line` references it quotes (`src/chat`). Check those line numbers after editing the cited files.
+- `docs/chat-flow.drawio`, `docs/intent-flow.drawio`, `docs/intent-flow.html`: the chat and intent flows by service. Edit the `.drawio` XML in place. `intent-flow.html` is a hand-written page: its nodes and per-intent steps are the `node(...)` calls and the `STEPS` object in its inline script, so edit those.
+- `docs/create-trip-flow.drawio`: trip creation and plan generation.
+- `docs/database-schema.drawio`: tables and columns, after any new file in `sql/migrations/`.
+- `docs/project_structure.jpg` is an image: do not edit it, tell me when it no longer matches.
+
+When a change touches behavior that a doc covers but you are not sure the doc is affected, name the doc in your reply instead of skipping it silently.

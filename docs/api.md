@@ -215,8 +215,8 @@ Payload (`CreateTripBody` = `TripRequest` + `user_id` + `message_id` tùy chọn
 | `end_date` | có | Không trước `start_date`; trip dài tối đa 30 ngày |
 | `travelers` | có | 1 đến 50 |
 | `travel_styles` | có | Ít nhất 1 giá trị trong `relax`, `adventure`, `culture`, `food`, `nature`, `nightlife`, `shopping`, `luxury`, `budget`; giá trị lặp bị bỏ |
-| `budget_amount` | có | Lớn hơn 0, tối đa 14 chữ số và 2 chữ số thập phân, tính bằng VND |
-| `budget_scope` | có | `per_person` hoặc `total` |
+| `budget_amount` | không | Lớn hơn 0, tối đa 14 chữ số và 2 chữ số thập phân, tính bằng VND. Bỏ trống (hoặc `null`) cùng `budget_scope` để AI tự đề xuất ngân sách: tổng chi phí của kế hoạch là ngân sách đề xuất, và trip không bao giờ `over_budget` |
+| `budget_scope` | không | `per_person` hoặc `total`; có khi và chỉ khi có `budget_amount` |
 | `language` | không | `en` (mặc định) hoặc `vi` |
 | `notes` | không | Tối đa 2000 ký tự; chuỗi rỗng thành `null` |
 

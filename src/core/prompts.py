@@ -302,6 +302,7 @@ Use the sources for facts such as names, places and prices. Prefer them over you
 - Accommodation: 2 to 3 stays, exactly one with chosen true. The chosen stay covers the whole trip: check_in is the start date and check_out is the end date. rooms fits the group.
 - Checklist: 3 to 8 things to do or buy before leaving, such as visa, insurance, SIM card or booking tickets.
 - Keep the total cost of the chosen options, the stay, the items and the priced checklist within the budget in <trip>.
+- When <trip> says the budget is none given, the visitor wants you to suggest one: choose options at a sensible mid-range cost for the travel styles and the group. The total cost of the plan is the suggested budget.
 - If a research kind is missing from <sources>, fill that part with estimates and say nothing about it.
 - Do not write id, option_id, weather, currencies or warnings. Code sets them.
 </rules>

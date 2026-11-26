@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Luồng intent</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --ink: #1f2933;
+    --muted: #61707f;
+    --line: #c3cad3;
+    --node: #ffffff;
+    --node-stroke: #9aa5b1;
+    --core: #eceff1;
+    --ext: #e3f2fd;
+    --ext-stroke: #1565c0;
+    --db: #e8f5e9;
+    --db-stroke: #2e7d32;
+    --dim: 0.18;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161b;
+      --panel: #1b2128;
+      --ink: #e4e8ec;
+      --muted: #96a2ae;
+      --line: #46515d;
+      --node: #1f262e;
+      --node-stroke: #5b6773;
+      --core: #26303a;
+      --ext: #17304a;
+      --ext-stroke: #64a8f0;
+      --db: #1a3324;
+      --db-stroke: #6cc283;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161b;
+    --panel: #1b2128;
+    --ink: #e4e8ec;
+    --muted: #96a2ae;
+    --line: #46515d;
+    --node: #1f262e;
+    --node-stroke: #5b6773;
+    --core: #26303a;
+    --ext: #17304a;
+    --ext-stroke: #64a8f0;
+    --db: #1a3324;
+    --db-stroke: #6cc283;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header { padding: 20px 24px 8px; }
+  h1 { margin: 0; font-size: 20px; }
+  .hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 16px;
+    padding: 8px 24px 24px;
+    align-items: start;
+  }
+  .canvas {
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 8px;
+    overflow: auto;
+  }
+  svg { display: block; width: 100%; height: auto; min-width: 900px; }
+  aside {
+    position: sticky;
+    top: 16px;
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 16px 18px;
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+  }
+  aside h2 { margin: 0 0 2px; font-size: 17px; }
+  aside .meta { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  aside ol { margin: 0; padding: 0; list-style: none; }
+  aside li { display: grid; grid-template-columns: 34px 1fr; gap: 6px; padding: 5px 0; border-top: 1px solid var(--line); }
+  aside li .n { font-weight: 700; }
+  aside li .svc { font-weight: 600; }
+  aside .note { margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+  aside .empty { color: var(--muted); }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; padding: 8px 16px 16px; }
+    header { padding: 16px 16px 8px; }
+    aside { position: static; max-height: none; }
+  }
+
+  .edge { fill: none; stroke: var(--line); stroke-width: 1.2; opacity: 0.55; transition: opacity .15s, stroke-width .15s; }
+  .edge.on { opacity: 1; stroke-width: 2.6; stroke-dasharray: 7 5; animation: flow 0.9s linear infinite; }
+  .edge.off { opacity: 0.07; }
+  @keyframes flow { to { stroke-dashoffset: -12; } }
+  @media (prefers-reduced-motion: reduce) { .edge.on { animation: none; stroke-dasharray: none; } }
+  .node rect { stroke-width: 1.5; }
+  .node text { fill: var(--ink); font-size: 13px; font-weight: 600; }
+  .node text.sub { fill: var(--muted); font-size: 11px; font-weight: 400; }
+  .node { transition: opacity .15s; }
+  .node.off { opacity: var(--dim); }
+  .intent { cursor: pointer; outline: none; }
+  .intent:focus-visible rect.box { stroke-width: 3; }
+  .intent.pinned rect.box { stroke-width: 3; }
+  .badge rect { stroke-width: 1.2; }
+  .badge text { font-size: 11px; font-weight: 700; fill: #fff; }
+  .col-title { fill: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Luồng intent qua Orchestrator Agent</h1>
+  <p class="hint">Rê chuột vào một block Intent Input bên trái để xem cả luồng của intent đó; bấm để ghim, bấm lần nữa để bỏ ghim. Các bước trong một luồng chạy tuần tự, mỗi tin nhắn chỉ chạy 1 sub-agent.</p>
+</header>
+<main>
+  <div class="canvas"><svg id="diagram" viewBox="0 -6 1360 966" role="img" aria-label="Sơ đồ luồng intent"></svg></div>
+  <aside id="panel" aria-live="polite"><p class="empty">Chưa chọn intent nào.</p></aside>
+</main>
+<script>
+(() => {
+  const SVG = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("diagram");
+  const panel = document.getElementById("panel");
+
+  // Nodes: id -> geometry and text. kind picks the fill
+  const N = {};
+  const node = (id, x, y, w, h, label, sub, kind) => (N[id] = { id, x, y, w, h, label, sub, kind });
+
+  const FLOWS = [
+    { id: "blocked", name: "guard chặn", intent: "advice (blocked)", color: "#d81b60", example: "\"Viết code Python giúp tôi\"" },
+    { id: "clarify", name: "clarify", intent: "advice (clarify)", color: "#9e9d24", example: "câu hỏi Orchestrator không hiểu" },
+    { id: "advice", name: "advice", intent: "advice", color: "#1e88e5", example: "\"Ngày 2 đi những đâu?\"" },
+    { id: "web", name: "web_lookup", intent: "advice (searched)", color: "#00acc1", example: "\"Tháng 7 Đà Nẵng có lễ hội gì?\"" },
+    { id: "discover", name: "discover", intent: "discover", color: "#43a047", example: "\"Tôi muốn đi du lịch biển\"" },
+    { id: "hotel", name: "hotel_search", intent: "booking_search", color: "#fb8c00", example: "\"Khách sạn 4 sao Đà Nẵng giá?\"" },
+    { id: "flight", name: "flight_search", intent: "booking_search", color: "#8d6e63", example: "\"Vé máy bay Hà Nội đi Đà Nẵng\"" },
+    { id: "create", name: "create_trip", intent: "create_trip", color: "#8e24aa", example: "\"Tạo plan Đà Lạt 3 ngày, 2 người\"" },
+    { id: "edit", name: "edit_plan", intent: "edit_plan", color: "#e53935", example: "\"Đổi ngày 2 sang đi Cát Bà\"" },
+    { id: "fsuggest", name: "follow-up gợi ý", intent: "discover", color: "#3949ab", example: "bấm Gợi ý trên thẻ hỏi nhu cầu" },
+    { id: "fbooking", name: "follow-up booking", intent: "booking_search", color: "#b8860b", example: "chọn ngày trên thẻ chờ ngày" },
+  ];
+
+  // Intent Input blocks, one per flow
+  FLOWS.forEach((f, i) => node("in-" + f.id, 20, 60 + i * 78, 210, 62, f.name, f.example, "intent"));
+  node("guard", 300, 250, 150, 200, "Guardrail", "denylist + LLM judge", "core");
+  node("orch", 510, 250, 160, 200, "Orchestrator Agent", "chọn 1 / 7 sub-agent", "core");
+  const AG = [
+    ["fixed", "Fixed reply", "câu cố định"],
+    ["advice", "Advice Agent", "plan / kiến thức chung"],
+    ["web", "Web Lookup Agent", "trả lời từ web search"],
+    ["discover", "Discover Agent", "hỏi nhu cầu, gợi ý"],
+    ["hotel", "Hotel Search Agent", "tìm khách sạn"],
+    ["flight", "Flight Search Agent", "tìm vé máy bay, tàu, xe"],
+    ["create", "Create Trip Agent", "điền sẵn form trip"],
+    ["edit", "Edit Plan Agent", "sửa plan trip đang mở"],
+  ];
+  AG.forEach(([id, l, s], i) => node("ag-" + id, 760, 70 + i * 92, 200, 62, l, s, "agent"));
+  node("llm", 1120, 60, 200, 210, "LLM call", "OpenRouter, theo purpose", "ext");
+  node("tavily", 1120, 330, 200, 140, "Tavily", "web search", "ext");
+  node("geo", 1120, 510, 200, 56, "Open-Meteo", "geocoding", "ext");
+  node("resp", 1120, 600, 200, 150, "Response", "SSE: token, thẻ, form, plan", "core");
+  node("pg", 1120, 790, 200, 90, "Postgres", "draft, sources, reply, trips, jobs", "db");
+  node("worker", 860, 830, 160, 56, "Worker", "lease job, lên plan mới", "db");
+
+  // Steps per flow: [step id, from, to, text]; from/to null means the step has no drawn edge
+  const P = (agent) => [
+    ["1", null, null, "Postgres: lưu tin nhắn, nạp trip, plan, 10 tin gần nhất"],
+    ["2", "in", "guard", "Guardrail: denylist, rồi LLM judge"],
+    ["3", "guard", "llm", "LLM call (guard): lạc đề, injection, độc hại?"],
+    ["4", "guard", "orch", "Guardrail cho qua"],
+    ["5", "orch", "llm", "LLM call (classify): chọn sub-agent"],
+    ["6", "orch", agent, "Orchestrator chọn " + N[agent].label + ", chỉ chạy bước đầu"],
+  ];
+  const STEPS = {
+    blocked: [
+      ["1", null, null, "Postgres: lưu tin nhắn, nạp context"],
+      ["2", "in", "guard", "Guardrail: denylist, rồi LLM judge"],
+      ["3", "guard", "llm", "LLM call (guard): chấm điểm >= 0.7 thì chặn"],
+      ["4", "guard", "ag-fixed", "Guardrail chặn, không gọi Orchestrator"],
+      ["5", "ag-fixed", "pg", "Postgres: lưu reply advice, blocked"],
+      ["6", "ag-fixed", "resp", "Response: câu từ chối cố định"],
+    ],
+    clarify: [
+      ...P("ag-fixed").slice(0, 5),
+      ["6", "orch", "ag-fixed", "Orchestrator trả needs_clarification"],
+      ["7", "ag-fixed", "pg", "Postgres: lưu reply advice, clarify"],
+      ["8", "ag-fixed", "resp", "Response: câu hỏi lại do Orchestrator viết"],
+    ],
+    advice: [
+      ...P("ag-advice"),
+      ["7", "ag-advice", "pg", "Postgres: đọc trip, plan, draft"],
+      ["8", "ag-advice", "llm", "LLM call (answer): trả lời, stream"],
+      ["9", "ag-advice", "pg", "Postgres: lưu reply advice"],
+      ["10", "ag-advice", "resp", "Response: text"],
+    ],
+    web: [
+      ...P("ag-web"),
+      ["7", "ag-web", "tavily", "Tavily: web search, không có kết quả thì thử lại 1 lần"],
+      ["8", "ag-web", "pg", "Postgres: lưu sources"],
+      ["9", "tavily", "llm", "LLM call (answer): kết quả search vào prompt, rồi mới gọi"],
+      ["10", "ag-web", "pg", "Postgres: lưu reply advice, searched"],
+      ["11", "ag-web", "resp", "Response: text kèm nguồn"],
+    ],
+    discover: [
+      ...P("ag-discover"),
+      ["7", "ag-discover", "llm", "LLM call (discover): đọc chat thành draft"],
+      ["8", "ag-discover", "pg", "Postgres: lưu draft, tìm thẻ hỏi đang mở"],
+      ["9A", "ag-discover", "pg", "Draft thiếu: lưu thẻ hỏi 6 bước"],
+      ["10A", "ag-discover", "resp", "Response: thẻ hỏi nhu cầu, dừng"],
+      ["9B", "ag-discover", "tavily", "Draft đủ: 3 search điểm đến, lần lượt"],
+      ["10B", "ag-discover", "pg", "Postgres: lưu sources"],
+      ["11B", "tavily", "llm", "LLM call (suggest): gợi ý điểm đến từ kết quả search"],
+      ["12B", "ag-discover", "pg", "Postgres: lưu draft, reply discover"],
+      ["13B", "ag-discover", "resp", "Response: text + thẻ gợi ý"],
+    ],
+    hotel: [
+      ...P("ag-hotel"),
+      ["7", "ag-hotel", "pg", "Postgres: đọc draft, trip để lấy ngày"],
+      ["8A", "ag-hotel", "pg", "Thiếu hoặc sai ngày: lưu thẻ chờ ngày"],
+      ["9A", "ag-hotel", "resp", "Response: thẻ chọn ngày, dừng (không search)"],
+      ["8B", "ag-hotel", "tavily", "Có ngày: search khách sạn theo tháng"],
+      ["9B", "ag-hotel", "pg", "Postgres: lưu sources, ngày vào draft"],
+      ["10B", "tavily", "llm", "LLM call (answer, JSON): text + thẻ từ kết quả search"],
+      ["11B", "ag-hotel", "pg", "Postgres: lưu reply booking_search"],
+      ["12B", "ag-hotel", "resp", "Response: text + thẻ khách sạn (URL do code gắn)"],
+    ],
+    flight: [
+      ...P("ag-flight"),
+      ["7", "ag-flight", "pg", "Postgres: đọc draft, trip để lấy ngày, nơi đi"],
+      ["8A", "ag-flight", "pg", "Thiếu hoặc sai ngày: lưu thẻ chờ ngày"],
+      ["9A", "ag-flight", "resp", "Response: thẻ chọn ngày, dừng (không search)"],
+      ["8B", "ag-flight", "tavily", "Có ngày: search vé theo tháng"],
+      ["9B", "ag-flight", "pg", "Postgres: lưu sources"],
+      ["10B", "tavily", "llm", "LLM call (answer, JSON): text + thẻ từ kết quả search"],
+      ["11B", "ag-flight", "pg", "Postgres: lưu nơi đi người dùng nói, reply booking_search"],
+      ["12B", "ag-flight", "resp", "Response: text + thẻ vé"],
+    ],
+    create: [
+      ...P("ag-create"),
+      ["7", "ag-create", "pg", "Postgres: đọc draft, 10 tin gần nhất"],
+      ["8", "ag-create", "llm", "LLM call (discover): trích thông tin trip"],
+      ["9", "ag-create", "geo", "Open-Meteo: tọa độ điểm đến"],
+      ["10", "ag-create", "pg", "Postgres: lưu draft, form trip (open)"],
+      ["11", "ag-create", "resp", "Response: form điền sẵn; Create gọi POST /trips"],
+    ],
+    edit: [
+      ...P("ag-edit"),
+      ["7", "ag-edit", "pg", "Postgres: đang re-plan thì trả 409; chưa mở trip thì nhắc mở"],
+      ["8", "ag-edit", "llm", "LLM call (edit, JSON): đề xuất thay đổi"],
+      ["9A", "ag-edit", "pg", "Đổi ngày, số người, nơi đi: tạo job re-plan"],
+      ["10A", "pg", "worker", "Worker: lease job, lên plan mới, ghi vào trip"],
+      ["9B", "ag-edit", "pg", "Sửa item: kiểm tra luật, budget, lưu plan theo plan_revision"],
+      ["11", "ag-edit", "pg", "Postgres: lưu reply edit_plan"],
+      ["12", "ag-edit", "resp", "Response: plan mới + danh sách thay đổi"],
+    ],
+    fsuggest: [
+      ["1", "in", "ag-discover", "Bấm thẻ: bỏ qua Guardrail và Orchestrator"],
+      ["2", "ag-discover", "pg", "Postgres: đóng thẻ hỏi nhu cầu, đọc draft"],
+      ["3", "ag-discover", "tavily", "Tavily: 3 search điểm đến, lần lượt"],
+      ["4", "ag-discover", "pg", "Postgres: lưu sources"],
+      ["5", "tavily", "llm", "LLM call (suggest): gợi ý điểm đến"],
+      ["6", "ag-discover", "pg", "Postgres: lưu reply; lỗi trước khi có text thì mở lại thẻ"],
+      ["7", "ag-discover", "resp", "Response: text + thẻ gợi ý"],
+    ],
+    fbooking: [
+      ["1", "in", "ag-hotel", "Thẻ khách sạn: bỏ qua Guardrail và Orchestrator"],
+      ["1", "in", "ag-flight", "Thẻ vé: bỏ qua Guardrail và Orchestrator"],
+      ["2", "ag-hotel", "pg", "Postgres: kiểm tra ngày, đóng thẻ, lưu ngày vào draft"],
+      ["2", "ag-flight", "pg", null],
+      ["3", "ag-hotel", "tavily", "Tavily: search theo ngày đã chọn"],
+      ["3", "ag-flight", "tavily", null],
+      ["4", "tavily", "llm", "LLM call (answer, JSON): text + thẻ"],
+      ["5", "ag-hotel", "resp", "Response: text + thẻ khách sạn / vé; reply lưu vào Postgres"],
+      ["5", "ag-flight", "resp", null],
+    ],
+  };
+
+  // Resolve "in" to the flow's own Intent Input block and collect unique edges
+  const EDGES = new Map(); // key "from>to" -> { from, to, flows: Map(flowId -> [step ids]) }
+  for (const f of FLOWS) {
+    for (const s of STEPS[f.id]) {
+      if (s[1] === "in") s[1] = "in-" + f.id;
+      const [sid, from, to] = s;
+      if (!from) continue;
+      const key = from + ">" + to;
+      if (!EDGES.has(key)) EDGES.set(key, { from, to, flows: new Map() });
+      const e = EDGES.get(key);
+      if (!e.flows.has(f.id)) e.flows.set(f.id, []);
+      if (!e.flows.get(f.id).includes(sid)) e.flows.get(f.id).push(sid);
+    }
+  }
+
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(SVG, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+
+  // Arrowheads: one gray, one per flow color
+  const defs = el("defs", {}, svg);
+  const marker = (id, color) => {
+    const m = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0,0 L10,5 L0,10 z", fill: color }, m);
+  };
+  marker("arrow-idle", "#9aa5b1");
+  FLOWS.forEach((f) => marker("arrow-" + f.id, f.color));
+
+  // Column titles
+  [["Intent Input", 20], ["Guardrail", 300], ["Orchestrator", 510], ["Sub-agents", 760], ["Service", 1120]].forEach(([t, x]) => {
+    const tt = el("text", { x, y: 50, class: "col-title" }, svg);
+    tt.textContent = t;
+  });
+
+  // Edge geometry. Ports are spread along a side so lines into one block do not merge
+  const ports = { out: new Map(), in: new Map() };
+  const sideOf = (e) => {
+    if (e.from === "tavily" && e.to === "llm") return ["top", "bottom"];
+    if ((e.from === "guard" || e.from === "orch") && e.to === "llm") return ["top", "top"];
+    if (e.from === "pg" && e.to === "worker") return ["left", "right"];
+    return ["right", "left"];
+  };
+  for (const e of EDGES.values()) {
+    const [fs, ts] = sideOf(e);
+    e.fs = fs; e.ts = ts;
+    const ko = e.from + ":" + fs, ki = e.to + ":" + ts;
+    if (!ports.out.has(ko)) ports.out.set(ko, []);
+    if (!ports.in.has(ki)) ports.in.set(ki, []);
+    ports.out.get(ko).push(e);
+    ports.in.get(ki).push(e);
+  }
+  const center = (n) => [n.x + n.w / 2, n.y + n.h / 2];
+  const sortKey = (e, end) => center(N[end === "out" ? e.to : e.from])[1];
+  const place = (list, n, side, end) => {
+    list.sort((a, b) => sortKey(a, end) - sortKey(b, end));
+    list.forEach((e, i) => {
+      const t = (i + 1) / (list.length + 1);
+      let p;
+      if (side === "right") p = [n.x + n.w, n.y + n.h * t];
+      else if (side === "left") p = [n.x, n.y + n.h * t];
+      else if (side === "top") p = [n.x + n.w * t, n.y];
+      else p = [n.x + n.w * t, n.y + n.h];
+      if (end === "out") e.p0 = p; else e.p1 = p;
+    });
+  };
+  for (const [k, list] of ports.out) { const [id, side] = k.split(":"); place(list, N[id], side, "out"); }
+  for (const [k, list] of ports.in) { const [id, side] = k.split(":"); place(list, N[id], side, "in"); }
+
+  const lanes = { guard: 6, orch: 22 };
+  for (const e of EDGES.values()) {
+    const [x0, y0] = e.p0, [x1, y1] = e.p1;
+    if (e.to === "llm" && (e.from === "guard" || e.from === "orch")) {
+      // Over the top of the sub-agent column, then down into the LLM block
+      const ly = lanes[e.from];
+      e.d = `M${x0},${y0} V${ly + 8} Q${x0},${ly} ${x0 + 8},${ly} H${x1 - 8} Q${x1},${ly} ${x1},${ly + 8} V${y1}`;
+      e.mid = [(x0 + x1) / 2, ly];
+    } else if (e.fs === "top") {
+      e.d = `M${x0},${y0} V${y1}`;
+      e.mid = [x0, (y0 + y1) / 2];
+    } else if (e.fs === "left") {
+      e.d = `M${x0},${y0} C${x0 - 60},${y0} ${x1 + 60},${y1} ${x1},${y1}`;
+      e.mid = [(x0 + x1) / 2, (y0 + y1) / 2];
+    } else {
+      const dx = Math.max(50, (x1 - x0) * 0.45);
+      e.d = `M${x0},${y0} C${x0 + dx},${y0} ${x1 - dx},${y1} ${x1},${y1}`;
+      e.mid = [(x0 + x1) / 2, (y0 + y1) / 2];
+    }
+  }
+
+  const gEdges = el("g", {}, svg);
+  for (const e of EDGES.values()) {
+    e.path = el("path", { d: e.d, class: "edge", "marker-end": "url(#arrow-idle)" }, gEdges);
+  }
+
+  const FILL = {
+    intent: ["var(--node)", "var(--node-stroke)"],
+    core: ["var(--core)", "var(--node-stroke)"],
+    agent: ["var(--node)", "var(--node-stroke)"],
+    ext: ["var(--ext)", "var(--ext-stroke)"],
+    db: ["var(--db)", "var(--db-stroke)"],
+  };
+  const gNodes = el("g", {}, svg);
+  for (const n of Object.values(N)) {
+    const g = el("g", { class: "node" + (n.kind === "intent" ? " intent" : "") }, gNodes);
+    const [fill, stroke] = FILL[n.kind];
+    const flow = n.kind === "intent" ? FLOWS.find((f) => "in-" + f.id === n.id) : null;
+    el("rect", { class: "box", x: n.x, y: n.y, width: n.w, height: n.h, rx: 8, fill, stroke: flow ? flow.color : stroke }, g);
+    if (flow) el("rect", { x: n.x, y: n.y, width: 6, height: n.h, rx: 3, fill: flow.color }, g);
+    const tx = flow ? n.x + 16 : n.x + n.w / 2;
+    const anchor = flow ? "start" : "middle";
+    const cy = n.y + n.h / 2;
+    const t1 = el("text", { x: tx, y: cy - 3, "text-anchor": anchor }, g);
+    t1.textContent = n.label;
+    const t2 = el("text", { x: tx, y: cy + 14, "text-anchor": anchor, class: "sub" }, g);
+    t2.textContent = n.sub;
+    n.g = g;
+    if (flow) {
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "button");
+      g.setAttribute("aria-label", "Luồng " + flow.name);
+      g.addEventListener("mouseenter", () => { if (!pinned) show(flow); });
+      g.addEventListener("mouseleave", () => { if (!pinned) clear(); });
+      g.addEventListener("focus", () => { if (!pinned) show(flow); });
+      g.addEventListener("blur", () => { if (!pinned) clear(); });
+      g.addEventListener("click", () => togglePin(flow));
+      g.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); togglePin(flow); }
+      });
+      flow.node = n;
+    }
+  }
+  const gBadges = el("g", {}, svg);
+
+  let pinned = null;
+  const togglePin = (flow) => {
+    if (pinned === flow) { pinned = null; flow.node.g.classList.remove("pinned"); clear(); return; }
+    if (pinned) pinned.node.g.classList.remove("pinned");
+    pinned = flow;
+    flow.node.g.classList.add("pinned");
+    show(flow);
+  };
+
+  const clear = () => {
+    for (const e of EDGES.values()) {
+      e.path.setAttribute("class", "edge");
+      e.path.style.stroke = "";
+      e.path.setAttribute("marker-end", "url(#arrow-idle)");
+    }
+    for (const n of Object.values(N)) n.g.classList.remove("off");
+    gBadges.replaceChildren();
+    panel.innerHTML = '<p class="empty">Chưa chọn intent nào.</p>';
+  };
+
+  const show = (flow) => {
+    clear();
+    const used = new Set();
+    for (const e of EDGES.values()) {
+      if (e.flows.has(flow.id)) {
+        e.path.setAttribute("class", "edge on");
+        e.path.style.stroke = flow.color;
+        e.path.setAttribute("marker-end", `url(#arrow-${flow.id})`);
+        gEdges.appendChild(e.path);
+        used.add(e.from); used.add(e.to);
+        const label = e.flows.get(flow.id).join(", ");
+        const w = 10 + label.length * 6.6;
+        const b = el("g", { class: "badge" }, gBadges);
+        el("rect", { x: e.mid[0] - w / 2, y: e.mid[1] - 9, width: w, height: 18, rx: 9, fill: flow.color, stroke: "var(--panel)" }, b);
+        const t = el("text", { x: e.mid[0], y: e.mid[1] + 4, "text-anchor": "middle" }, b);
+        t.textContent = label;
+      } else {
+        e.path.setAttribute("class", "edge off");
+      }
+    }
+    for (const n of Object.values(N)) if (!used.has(n.id)) n.g.classList.add("off");
+    const rows = STEPS[flow.id]
+      .filter((s) => s[3])
+      .map((s) => {
+        const [svc, ...rest] = s[3].split(": ");
+        const text = rest.length ? `<span class="svc">${svc}:</span> ${rest.join(": ")}` : svc;
+        return `<li><span class="n" style="color:${flow.color}">${s[0]}</span><span>${text}</span></li>`;
+      })
+      .join("");
+    const note = flow.id === "fsuggest" || flow.id === "fbooking"
+      ? "Follow-up: tin nhắn đến từ việc bấm thẻ nên không qua Guardrail và Orchestrator."
+      : "Bước 1 do Chat Service làm, không vẽ trên sơ đồ. A / B là hai nhánh, chỉ một nhánh chạy.";
+    panel.innerHTML =
+      `<h2 style="color:${flow.color}">${flow.name}</h2>` +
+      `<div class="meta">intent lưu: <b>${flow.intent}</b><br>${flow.example}</div>` +
+      `<ol>${rows}</ol><p class="note">${note}</p>`;
+  };
+})();
+</script>
+</body>
+</html>

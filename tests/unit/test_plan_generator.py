@@ -192,6 +192,16 @@ def test_domestic_trip_states_vnd_only_and_the_budget():
     assert "20,000,000 VND for the whole group" in content
 
 
+def test_no_budget_asks_the_model_to_suggest_one_and_never_cuts():
+    request = bangkok_request(budget_amount=None, budget_scope=None)
+    provider = FakeProvider([answer()])
+    result = generate_plan(make_router(provider), request, bundle(), None, CTX)
+    assert len(provider.calls) == 1
+    assert "budget: none given, suggest one" in provider.calls[0][0][0]["content"]
+    assert result.over_budget is False
+    assert [w.code for w in result.plan.warnings] == []
+
+
 def test_plan_rule_errors_get_one_repair_round():
     broken = json.loads(answer())
     broken["transport_options"] = [o for o in broken["transport_options"] if o["leg"] != "return"]

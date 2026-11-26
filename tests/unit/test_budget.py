@@ -65,6 +65,11 @@ def test_over_budget_reads_a_total_budget_without_multiplying():
     assert over_budget_vnd(bangkok_plan(), request) == Decimal(3436700)
 
 
+def test_over_budget_is_zero_without_a_budget():
+    request = dalat_request(budget_amount=None, budget_scope=None)
+    assert over_budget_vnd(dalat_plan(), request) == Decimal(0)
+
+
 def test_a_third_currency_cannot_be_costed():
     plan = dalat_plan()
     bad = plan.days[0].items[0].model_copy(update={"price_currency": "USD"})

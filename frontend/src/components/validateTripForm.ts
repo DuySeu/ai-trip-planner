@@ -26,6 +26,8 @@ export interface TripFormValues {
   travel_styles: TravelStyle[];
   budget_amount: string;
   budget_scope: BudgetScope;
+  // The visitor lets the AI suggest the budget: amount and scope are not sent
+  budget_auto: boolean;
   notes: string;
 }
 
@@ -47,7 +49,7 @@ export function validateTripForm(values: TripFormValues, today: string): TripFor
     errors.travelers = "form.errors.travelers";
   }
   if (values.travel_styles.length === 0) errors.travel_styles = "form.errors.styles";
-  if (!(Number(values.budget_amount) > 0)) errors.budget_amount = "form.errors.budget";
+  if (!values.budget_auto && !(Number(values.budget_amount) > 0)) errors.budget_amount = "form.errors.budget";
   if (values.notes.length > MAX_NOTES) errors.notes = "form.errors.notes";
   return errors;
 }
@@ -68,8 +70,8 @@ export function toCreateTripBody(
     end_date: values.end_date,
     travelers: values.travelers,
     travel_styles: values.travel_styles,
-    budget_amount: values.budget_amount,
-    budget_scope: values.budget_scope,
+    budget_amount: values.budget_auto ? null : values.budget_amount,
+    budget_scope: values.budget_auto ? null : values.budget_scope,
     language: lang,
     notes: notes === "" ? null : notes,
   };
@@ -91,6 +93,7 @@ export function fromDraft(draft: RequestDraft | null, place: Place | null, fallb
     travel_styles: d.travel_styles ?? [],
     budget_amount: d.budget_amount ? String(Math.round(Number(d.budget_amount))) : "",
     budget_scope: d.budget_scope ?? "per_person",
+    budget_auto: false,
     notes: d.notes ?? "",
   };
 }
@@ -105,8 +108,9 @@ export function toDraft(values: TripFormValues): RequestDraft {
     ...(values.end_date ? { end_date: values.end_date } : {}),
     travelers: values.travelers,
     travel_styles: values.travel_styles,
-    ...(values.budget_amount ? { budget_amount: values.budget_amount } : {}),
-    budget_scope: values.budget_scope,
+    ...(values.budget_amount && !values.budget_auto
+      ? { budget_amount: values.budget_amount, budget_scope: values.budget_scope }
+      : {}),
     ...(values.notes.trim() ? { notes: values.notes.trim() } : {}),
   };
 }

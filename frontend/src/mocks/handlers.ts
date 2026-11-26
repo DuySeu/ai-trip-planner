@@ -310,7 +310,7 @@ export const handlers = [
       end_date: body.end_date,
       travelers: body.travelers,
       travel_styles: body.travel_styles,
-      budget_amount: Number(body.budget_amount).toFixed(2),
+      budget_amount: body.budget_amount === null ? null : Number(body.budget_amount).toFixed(2),
       budget_scope: body.budget_scope,
       local_currency: country === "VN" ? null : (COUNTRY_CURRENCY[country] ?? null),
       language: body.language,
@@ -447,7 +447,8 @@ function firstBrokenRule(body: CreateTripBody): string | null {
   if (body.travel_styles.length === 0 || !body.travel_styles.every((s) => TRAVEL_STYLES.includes(s))) {
     return "Pick at least one travel style";
   }
-  if (!(Number(body.budget_amount) > 0)) return "The budget must be above 0";
+  if ((body.budget_amount === null) !== (body.budget_scope === null)) return "budget_amount and budget_scope are given together";
+  if (body.budget_amount !== null && !(Number(body.budget_amount) > 0)) return "The budget must be above 0";
   if (body.language !== "en" && body.language !== "vi") return "Unknown language";
   if ((body.notes ?? "").length > MAX_NOTES) return "Notes can be at most 2000 characters";
   return null;

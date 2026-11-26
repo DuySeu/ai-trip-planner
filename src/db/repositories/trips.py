@@ -33,8 +33,8 @@ class TripRow:
     end_date: date
     travelers: int
     travel_styles: list[str]
-    budget_amount: Decimal
-    budget_scope: str
+    budget_amount: Decimal | None
+    budget_scope: str | None
     local_currency: str | None
     language: str
     notes: str | None
@@ -163,8 +163,13 @@ def _request_params(request: Mapping[str, Any]) -> dict[str, Any]:
         "end_date": date.fromisoformat(str(request["end_date"])),
         "travelers": request["travelers"],
         "travel_styles": list(request["travel_styles"]),
-        "budget_amount": Decimal(str(request["budget_amount"])),
-        "budget_scope": request["budget_scope"],
+        "budget_amount": _decimal_or_none(request.get("budget_amount")),
+        "budget_scope": request.get("budget_scope"),
         "language": request.get("language", "en"),
         "notes": request.get("notes"),
     }
+
+
+# A JSON amount as a Decimal; None stays None
+def _decimal_or_none(value: Any) -> Decimal | None:
+    return None if value is None else Decimal(str(value))

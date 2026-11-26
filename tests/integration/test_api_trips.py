@@ -205,6 +205,16 @@ def test_create_trip_returns_202_and_queues_trip_and_job(client, db_conn):
     assert job is not None and job.kind == "generate_plan"
 
 
+def test_create_trip_without_budget_stores_no_budget(client, db_conn):
+    user_id = claim(client)
+    body = {k: v for k, v in trip_body(user_id).items() if not k.startswith("budget_")}
+    response = client.post("/trips", json=body)
+    assert response.status_code == 202
+    trip = trips.get_trip(db_conn, UUID(response.json()["data"]["id"]))
+    assert trip.budget_amount is None and trip.budget_scope is None
+    assert client.get(f"/trips/{trip.id}").json()["data"]["budget_amount"] is None
+
+
 def test_create_trip_derives_local_currency_from_country_not_from_client(client, db_conn):
     user_id = claim(client)
     domestic = create_trip(client, user_id, local_currency="USD")

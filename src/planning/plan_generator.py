@@ -78,9 +78,15 @@ def _prompt_content(request: TripRequest, research: ResearchBundle, previous: Pl
         f"dates: {request.start_date.isoformat()} to {request.end_date.isoformat()}\n"
         f"travelers: {request.travelers}\n"
         f"travel styles: {', '.join(request.travel_styles)}\n"
-        f"budget: {_vnd(budget_total_vnd(request))} VND for the whole group, "
-        f"{request.budget_scope.replace('_', ' ')} amount {_vnd(request.budget_amount)} VND"
     )
+    budget = budget_total_vnd(request)
+    if budget is None or request.budget_amount is None or request.budget_scope is None:
+        trip += "budget: none given, suggest one"
+    else:
+        trip += (
+            f"budget: {_vnd(budget)} VND for the whole group, "
+            f"{request.budget_scope.replace('_', ' ')} amount {_vnd(request.budget_amount)} VND"
+        )
     if request.notes:
         trip += f"\nnotes from the visitor: {_data(request.notes)}"
     weather = "\n".join(
@@ -192,13 +198,14 @@ def generate_plan(
     plan = check_plan(_assemble(result.value, request, research), request, known_ids).plan
     model_id = result.model_id
 
+    budget = budget_total_vnd(request)
     over = over_budget_vnd(plan, request)
-    if over > 0:
+    if budget is not None and over > 0:
         total = total_cost_vnd(plan, request.travelers)
         cut_message = budget_cut_prompt.format(
             total=_vnd(total),
             travelers=request.travelers,
-            budget=_vnd(budget_total_vnd(request)),
+            budget=_vnd(budget),
             over=_vnd(over),
         )
         messages = [
@@ -218,12 +225,11 @@ def generate_plan(
             over = over_budget_vnd(plan, request)
 
     warnings = _missing_research(research)
-    if over > 0:
+    if budget is not None and over > 0:
         warnings += (
             PlanWarning(
                 code="over_budget",
-                message=f"The plan is {_vnd(over)} VND over the budget of "
-                f"{_vnd(budget_total_vnd(request))} VND.",
+                message=f"The plan is {_vnd(over)} VND over the budget of {_vnd(budget)} VND.",
             ),
         )
     plan = plan.model_copy(update={"warnings": warnings})

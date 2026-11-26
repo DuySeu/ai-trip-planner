@@ -12,6 +12,7 @@ const valid: TripFormValues = {
   travel_styles: ["nature"],
   budget_amount: "5000000",
   budget_scope: "per_person",
+  budget_auto: false,
   notes: "  ",
 };
 
@@ -41,6 +42,14 @@ describe("validateTripForm", () => {
   it("rejects_zero_budget_and_51_travelers", () => {
     const errors = validateTripForm({ ...valid, budget_amount: "0", travelers: 51 }, TODAY);
     expect(errors).toMatchObject({ budget_amount: "form.errors.budget", travelers: "form.errors.travelers" });
+  });
+
+  it("ai_suggested_budget_needs_no_amount_and_sends_null_budget", () => {
+    const values = { ...valid, budget_amount: "", budget_auto: true };
+    expect(validateTripForm(values, TODAY)).toEqual({});
+    const body = toCreateTripBody(values, "u1", "en");
+    expect([body.budget_amount, body.budget_scope]).toEqual([null, null]);
+    expect(toDraft(values)).not.toHaveProperty("budget_scope");
   });
 
   it("to_create_trip_body_sends_null_notes_and_no_removed_fields", () => {

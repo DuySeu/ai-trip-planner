@@ -70,14 +70,17 @@ CATALOG: tuple[AgentSpec, ...] = (
         name="hotel_search",
         description="Find hotels or places to stay in a named place, or what they cost per "
         'night, such as "4-star hotels in Hai Phong" or "khách sạn gần biển Đồ Sơn giá rẻ". '
-        "The step task is a web search query for those hotels with the place, the stars or "
-        "budget and the word price.",
+        "The step task is a short web search query of keywords, not a sentence: the hotel or "
+        'area name, the place, the stars or budget and the word price, such as "khách sạn Sun '
+        'World Phú Quốc giá". No dates and no verb such as "find" or "tìm"; code adds the month.',
     ),
     AgentSpec(
         name="flight_search",
         description="Find flights, trains or buses between two places, or what a ticket costs, "
         'such as "vé máy bay Hà Nội đi Đà Nẵng" or "train from Hanoi to Hue". The step task '
-        "is a web search query with the origin, the destination, the mode and the word price.",
+        "is a short web search query of keywords, not a sentence: the origin, the destination, "
+        'the mode and the word price, such as "vé máy bay Hà Nội Phú Quốc giá". No dates and no '
+        'verb such as "find" or "tìm"; code adds the month.',
     ),
     AgentSpec(
         name="create_trip",

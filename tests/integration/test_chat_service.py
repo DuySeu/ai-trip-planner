@@ -472,6 +472,19 @@ def test_hotel_cards_with_unknown_sources_only_give_no_cards(db_pool, db_conn, c
     assert last.metadata is not None and last.metadata["cards"] == []
 
 
+def test_hotel_question_with_dates_in_the_message_searches_without_a_card(
+    db_pool, db_conn, conversation
+):
+    search = FakeSearch(default=HOTEL_HITS)
+    answer = hotel_answer("Some options.", {"name": "Mercure", "source_id": 1})
+    rig = Rig(db_pool, [route("hotel_search", "khách sạn Hải Phòng giá"), answer], search)
+    events = rig.say(conversation.id, "Khách sạn Hải Phòng ngày 20/12 đến 23/12 giá bao nhiêu?")
+
+    assert search.calls == ["khách sạn Hải Phòng giá 12/2026"]
+    assert events[-2].data["metadata"]["dates"] == STAY
+    assert get_conversation(db_conn, conversation.id).request_draft == DRAFT_DATES
+
+
 def test_hotel_question_with_past_draft_dates_asks_for_new_dates(db_pool, db_conn, conversation):
     save_draft(db_conn, conversation.id, {"start_date": "2026-11-01", "end_date": "2026-11-03"})
     search = FakeSearch(default=HOTEL_HITS)

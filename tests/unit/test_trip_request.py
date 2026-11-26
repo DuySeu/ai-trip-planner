@@ -58,6 +58,18 @@ def test_validate_request_rejects_end_before_start():
     assert validate_request(request(end_date="2026-12-19"), TODAY)
 
 
+def test_request_without_budget_leaves_it_to_the_planner():
+    no_budget = request(budget_amount=None, budget_scope=None)
+    assert no_budget.budget_amount is None and budget_total_vnd(no_budget) is None
+
+
+def test_budget_amount_and_scope_are_given_together():
+    with pytest.raises(ValidationError):
+        request(budget_amount=None)
+    with pytest.raises(ValidationError):
+        request(budget_scope=None)
+
+
 def test_validate_request_rejects_unknown_country():
     destination = {**FIELDS["destination"], "country_code": "ZZ"}
     errors = validate_request(request(destination=destination), TODAY)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from domain.booking import BookingDates, dates_errors, dates_from
+from domain.booking import BookingDates, dates_errors, dates_from, dates_in_text
 from domain.trip_request import TripRequest
 
 TODAY = date(2026, 11, 21)
@@ -66,3 +66,28 @@ def test_dates_from_is_none_when_the_search_lacks_dates():
     assert dates_from("hotel", {"start_date": D(3).isoformat()}, None) is None
     assert dates_from("hotel", None, None) is None
     assert dates_from("flight", {"start_date": D(3).isoformat()}, None) == BookingDates(depart=D(3))
+
+
+def test_dates_in_text_reads_day_month_and_takes_the_next_such_date():
+    text = "Khách sạn ở Phú Quốc ngày 25/12 đến 27/12 giá bao nhiêu?"
+    assert dates_in_text(text, TODAY) == [date(2026, 12, 25), date(2026, 12, 27)]
+    assert dates_in_text("đi ngày 3/2", TODAY) == [date(2027, 2, 3)]
+
+
+def test_dates_in_text_rolls_a_later_date_into_the_next_year():
+    text = "from 30/12 to 02/01"
+    assert dates_in_text(text, TODAY) == [date(2026, 12, 30), date(2027, 1, 2)]
+
+
+def test_dates_in_text_keeps_a_written_year_and_skips_impossible_dates():
+    assert dates_in_text("25/12/2027 and 31/02 and 1/2/26", TODAY) == [date(2027, 12, 25)]
+
+
+def test_dates_from_prefers_dates_said_in_the_message():
+    said = [D(40), D(42)]
+    assert dates_from("hotel", None, trip(), said) == BookingDates(check_in=D(40), check_out=D(42))
+    assert dates_from("flight", None, None, said[:1]) == BookingDates(depart=D(40))
+    # One date is not a stay: the open trip still gives the hotel dates
+    assert dates_from("hotel", None, trip(), said[:1]) == BookingDates(
+        check_in=D(30), check_out=D(33)
+    )

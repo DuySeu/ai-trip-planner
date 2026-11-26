@@ -50,7 +50,10 @@ def total_cost_vnd(plan: Plan, travelers: int) -> Decimal:
     return round(per_person * travelers, 2)
 
 
-# How many VND the plan is over the request's budget; 0 when within it
+# How many VND the plan is over the request's budget; 0 when within it or when there is no budget
 def over_budget_vnd(plan: Plan, request: TripRequest) -> Decimal:
-    excess = total_cost_vnd(plan, request.travelers) - budget_total_vnd(request)
+    budget = budget_total_vnd(request)
+    if budget is None:
+        return Decimal(0)
+    excess = total_cost_vnd(plan, request.travelers) - budget
     return max(excess, Decimal(0))

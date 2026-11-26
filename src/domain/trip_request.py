@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from domain.currency import local_currency_for
 
@@ -79,8 +79,9 @@ class TripRequest(BaseModel):
     end_date: date
     travelers: int = Field(ge=1, le=50)
     travel_styles: tuple[TravelStyle, ...] = Field(min_length=1)
-    budget_amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
-    budget_scope: BudgetScope
+    # Both null: no budget given, the planner picks a sensible cost and the plan's total is its suggestion
+    budget_amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    budget_scope: BudgetScope | None = None
     language: Language = "en"
     notes: str | None = None
 
@@ -97,6 +98,13 @@ class TripRequest(BaseModel):
     @classmethod
     def _dedupe(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(dict.fromkeys(value))
+
+    # An amount needs its scope and a scope needs its amount
+    @model_validator(mode="after")
+    def _budget_pair(self) -> TripRequest:
+        if (self.budget_amount is None) != (self.budget_scope is None):
+            raise ValueError("budget_amount and budget_scope are given together or not at all")
+        return self
 
 
 # Rules that need more than one field or today's date; empty means valid
@@ -122,8 +130,10 @@ def today_in_vietnam(now: datetime) -> date:
     return now.astimezone(VIETNAM_TZ).date()
 
 
-# The whole group's budget in VND
-def budget_total_vnd(request: TripRequest) -> Decimal:
+# The whole group's budget in VND; None when the visitor left the budget to the planner
+def budget_total_vnd(request: TripRequest) -> Decimal | None:
+    if request.budget_amount is None:
+        return None
     if request.budget_scope == "per_person":
         return request.budget_amount * request.travelers
     return request.budget_amount

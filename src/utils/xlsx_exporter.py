@@ -13,7 +13,7 @@ from openpyxl.formatting.formatting import ConditionalFormattingList  # type: ig
 from openpyxl.utils.cell import range_boundaries  # type: ignore[import-untyped]
 from openpyxl.worksheet.worksheet import Worksheet  # type: ignore[import-untyped]
 
-from domain.budget import cost_lines
+from domain.budget import cost_lines, total_cost_vnd
 from domain.currency import HOME_CURRENCY, to_vnd
 from domain.plan import CATEGORY_LABELS_VI, ChecklistItem, Plan, PlanItem
 from domain.trip_request import Language, TripRequest, budget_total_vnd
@@ -180,7 +180,11 @@ def _fill_checklist(ws: Worksheet, plan: Plan, request: TripRequest, currency: s
     ws["L4"] = f"{request.start_date:%d/%m/%Y} - {request.end_date:%d/%m/%Y}"
     ws["L5"] = (request.end_date - request.start_date).days
     ws["L8"] = styles
-    ws["L9"] = _num(budget_total_vnd(request) / request.travelers)
+    # No budget given: the plan's cost is the suggested budget
+    budget = budget_total_vnd(request)
+    if budget is None:
+        budget = total_cost_vnd(plan, request.travelers)
+    ws["L9"] = _num(budget / request.travelers)
     if chosen is not None:
         ws["L12"] = ", ".join(filter(None, (chosen.name, chosen.area)))
 

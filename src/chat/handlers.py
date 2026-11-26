@@ -7,6 +7,7 @@ import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from psycopg import Connection
@@ -116,6 +117,11 @@ def trip_request_of(row: TripRow) -> TripRequest:
     )
 
 
+# The group's budget for a prompt; none when the planner suggested it
+def _budget_text(budget: Decimal | None) -> str:
+    return "none given" if budget is None else f"{budget:,.0f} VND for the whole group"
+
+
 # Read the user's trips, the open trip with its plan and sources, and the recent messages
 def load_context(conn: Connection[Any], turn: ChatTurn) -> ChatContext:
     lines = [
@@ -168,7 +174,7 @@ def build_prompt(
             f"<trip>\ndestination: {r.destination.name} ({r.destination.country_code})\n"
             f"origin: {r.origin}\ndates: {r.start_date.isoformat()} to {r.end_date.isoformat()}\n"
             f"travelers: {r.travelers}\nstyles: {', '.join(r.travel_styles)}\n"
-            f"budget: {budget_total_vnd(r):,.0f} VND for the whole group\n"
+            f"budget: {_budget_text(budget_total_vnd(r))}\n"
             f"status: {data.trip.status}\n</trip>"
         )
         if data.plan is not None:
@@ -303,13 +309,13 @@ def edit_plan(
         yield from token_events(localized(message, CANNOT_APPLY))
         return
     over = over_budget_vnd(checked.plan, request)
+    budget = budget_total_vnd(request)
     warnings = tuple(w for w in checked.plan.warnings if w.code != "over_budget")
-    if over > 0:
+    if budget is not None and over > 0:
         warnings += (
             PlanWarning(
                 code="over_budget",
-                message=f"The plan is {over:,.0f} VND over the budget of "
-                f"{budget_total_vnd(request):,.0f} VND.",
+                message=f"The plan is {over:,.0f} VND over the budget of {budget:,.0f} VND.",
             ),
         )
     new_plan = checked.plan.model_copy(update={"warnings": warnings})

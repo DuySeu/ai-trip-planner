@@ -174,6 +174,13 @@ def test_checklist_lists_costs_then_items_with_trip_info_in_column_l():
     assert ws["B2"].value == "Di chuyển/Đi lại"
 
 
+def test_trip_without_budget_writes_the_plan_cost_per_person_as_budget():
+    plan, request = dalat_plan(), dalat_request(budget_amount=None, budget_scope=None)
+    ws = export(plan, request)["Checklist"]
+    per_person = total_cost_vnd(plan, request.travelers) / request.travelers
+    assert ws["L9"].value == pytest.approx(float(per_person))
+
+
 def test_vietnamese_trip_writes_trip_info_in_vietnamese():
     ws = export(dalat_plan(), dalat_request())["Checklist"]
     assert ws["L8"].value == "Thiên nhiên, Ẩm thực"

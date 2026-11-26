@@ -214,7 +214,7 @@ export const mockDb = {
 export function withPlan<T extends Trip>(trip: T, plan: Plan): T {
   const total = planTotalVnd(plan, trip.travelers);
   const budget = Number(trip.budget_amount) * (trip.budget_scope === "per_person" ? trip.travelers : 1);
-  const isOver = total > budget;
+  const isOver = trip.budget_amount !== null && total > budget;
   const warnings = plan.warnings.filter((w) => w.code !== "over_budget");
   return {
     ...trip,
