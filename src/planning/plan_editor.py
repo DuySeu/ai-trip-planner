@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from decimal import Decimal
 
-from chat.history import message_for_model
 from core.prompts import plan_editor_prompt
 from db.repositories.messages import MessageRow
 from domain.plan import Plan, PlanItem
@@ -13,6 +12,7 @@ from domain.plan_edit import EditRejected, PlanEdit, apply_edit
 from domain.plan_rules import check_plan
 from domain.trip_request import TripRequest
 from models.model_router import CallContext, JsonResult, ModelRouter, call_json, compact_schema
+from orchestration.state_manager import message_for_model
 
 HISTORY_MESSAGES = 10
 # Fields set by code that the model must not see in the schema

@@ -11,17 +11,19 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from agents.create_trip_agent import CreateTripAgent, drop_past_dates
-from chat.events import ChatEvent, metadata_event
-from chat.handlers import HISTORY_MESSAGES, VIETNAMESE_LETTER, conversation_text
 from core.exceptions import InvalidLLMOutput, LLMUnavailable, ResearchFailed
 from db.repositories import conversations, messages
 from domain.discovery import RequestDraft, TripFormExtract, merge_draft
 from domain.trip_request import Destination, Language, today_in_vietnam
 from models.model_router import CallContext
+from orchestration.events import ChatEvent, metadata_event
+from orchestration.handlers import VIETNAMESE_LETTER, conversation_text
+from orchestration.state_manager import HISTORY_MESSAGES
 
 if TYPE_CHECKING:
-    # Imported for annotations only: chat_service imports this module
-    from chat.chat_service import ChatDeps, ChatTurn
+    # Imported for annotations only: orchestrator imports this module
+    from orchestration.orchestrator import ChatDeps
+    from orchestration.state_manager import ChatTurn
 
 logger = logging.getLogger(__name__)
 

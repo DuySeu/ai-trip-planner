@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from chat.history import message_for_model
 from db.repositories.messages import MessageRow
+from orchestration.state_manager import message_for_model
 
 HAI_PHONG = {"name": "Hải Phòng", "country_code": "VN", "lat": 20.86, "lon": 106.68}
 

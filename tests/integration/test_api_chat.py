@@ -12,12 +12,12 @@ from fastapi.testclient import TestClient
 from psycopg_pool import ConnectionPool
 
 from api.routes.chat import get_chat_deps, sse_stream
-from chat.chat_service import prepare_message
 from core.constants import ModelId
 from core.settings import load_settings
 from db.pool import open_pool
 from db.repositories import conversations, messages, quota, trips, users
 from db.repositories.trips import TripRow
+from orchestration.state_manager import prepare_message
 from service.tavily.search import SearchHit
 from tests.fakes import FakeSearch
 from tests.fixtures.builders import DALAT_FIELDS, dalat_plan

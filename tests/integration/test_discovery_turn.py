@@ -11,15 +11,6 @@ from typing import Any
 import pytest
 from psycopg_pool import ConnectionPool
 
-from chat.chat_service import ChatDeps, ChatTurn, FollowUp, prepare_message, stream_reply
-from chat.discovery_turn import (
-    MAX_QUERIES,
-    discovery_queries,
-    run_discover_turn,
-    run_suggest_turn,
-)
-from chat.events import ChatEvent
-from chat.questionnaire_service import answer_questionnaire
 from core.constants import ModelId
 from core.exceptions import Conflict, InvalidInput, InvalidLLMOutput, NotFound, ResearchFailed
 from core.settings import load_settings
@@ -28,6 +19,15 @@ from db.repositories.messages import add_message, get_message, list_messages, re
 from db.repositories.users import claim_user
 from domain.discovery import RequestDraft, merge_draft
 from models.model_router import CallContext, ModelRouter
+from orchestration.discovery_turn import (
+    MAX_QUERIES,
+    discovery_queries,
+    run_discover_turn,
+    run_suggest_turn,
+)
+from orchestration.events import ChatEvent
+from orchestration.orchestrator import ChatDeps, stream_reply
+from orchestration.state_manager import ChatTurn, FollowUp, answer_questionnaire, prepare_message
 from service.tavily.search import SearchHit
 from tests.fakes import FakeProvider, FakeSearch, FakeSink
 

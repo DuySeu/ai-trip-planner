@@ -8,11 +8,11 @@ from typing import Any
 
 import pytest
 
-from chat.guard_turn import GUARDRAIL_CONFIG as CONFIG
 from core.constants import ModelId
 from guardrail import Action, Decision, GuardrailConfigError, load_guardrail
 from models.llm_factory import ProviderCallError
 from models.model_router import CallContext, ModelRouter
+from orchestration.guard_turn import GUARDRAIL_CONFIG as CONFIG
 from tests.fakes import FakeProvider, FakeSink
 
 JUDGE = ModelId.LING_3_2_FLASH

@@ -7,11 +7,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from chat.handlers import data_text
-from chat.history import message_for_model
 from db.repositories.messages import MessageRow
 from guardrail import Decision, load_guardrail
 from models.model_router import CallContext, ModelRouter
+from orchestration.handlers import data_text
+from orchestration.state_manager import message_for_model
 
 # Text files of the guards, read once at import so a missing file fails at startup
 PROMPT_DIR = Path(__file__).resolve().parents[1] / "guardrail" / "prompt"

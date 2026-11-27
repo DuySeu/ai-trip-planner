@@ -13,8 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from agents.flight_options_agent import FlightOptionsAgent
 from agents.hotel_options_agent import HotelOptionsAgent
-from chat.events import ChatEvent, metadata_event, token_events
-from chat.handlers import ChatContext, build_prompt, localized, sources_text
 from core.exceptions import ResearchFailed
 from db.repositories import conversations, messages, research
 from db.repositories.research import SourceInput, SourceRow
@@ -24,10 +22,14 @@ from domain.flights import flight_cards_out
 from domain.hotels import hotel_cards_out
 from domain.trip_request import today_in_vietnam
 from models.model_router import CallContext
+from orchestration.events import ChatEvent, metadata_event, token_events
+from orchestration.handlers import build_prompt, localized, sources_text
+from orchestration.state_manager import ChatContext
 
 if TYPE_CHECKING:
-    # Imported for annotations only: chat_service imports this module
-    from chat.chat_service import ChatDeps, ChatTurn
+    # Imported for annotations only: orchestrator imports this module
+    from orchestration.orchestrator import ChatDeps
+    from orchestration.state_manager import ChatTurn
 
 logger = logging.getLogger(__name__)
 

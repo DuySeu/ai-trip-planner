@@ -23,14 +23,14 @@ from api.schemas.chat import (
     conversation_out,
     message_out,
 )
-from chat.chat_service import ChatDeps, ChatTurn, FollowUp, prepare_message, stream_reply
-from chat.events import to_sse
-from chat.guard_turn import GUARDRAIL_CONFIG
-from chat.questionnaire_service import answer_questionnaire
 from core.chat_models import chat_models_for
 from core.exceptions import Conflict, InvalidInput, LimitExceeded, NotFound
 from db.repositories import conversations, messages, users
 from domain.trip_request import today_in_vietnam
+from orchestration.events import to_sse
+from orchestration.guard_turn import GUARDRAIL_CONFIG
+from orchestration.orchestrator import ChatDeps, stream_reply
+from orchestration.state_manager import ChatTurn, FollowUp, answer_questionnaire, prepare_message
 from research.cache import DbCache
 from research.places import search_places
 

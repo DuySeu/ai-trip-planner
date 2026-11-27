@@ -11,10 +11,6 @@ from uuid import uuid4
 import pytest
 from psycopg_pool import ConnectionPool
 
-from chat.chat_service import ChatDeps, FollowUp, prepare_message, stream_reply
-from chat.events import ChatEvent, to_sse
-from chat.guard_turn import GUARDRAIL_CONFIG as GUARDRAIL
-from chat.guard_turn import OFF_TOPIC
 from core.constants import ModelId
 from core.exceptions import Conflict, InvalidInput, NotFound, PlanConflict
 from core.settings import load_settings
@@ -28,6 +24,11 @@ from db.repositories.users import UserRow, claim_user
 from domain.booking import BookingDates
 from models.llm_factory import ProviderCallError
 from models.model_router import ModelRouter
+from orchestration.events import ChatEvent, to_sse
+from orchestration.guard_turn import GUARDRAIL_CONFIG as GUARDRAIL
+from orchestration.guard_turn import OFF_TOPIC
+from orchestration.orchestrator import ChatDeps, stream_reply
+from orchestration.state_manager import FollowUp, prepare_message
 from service.tavily.search import SearchHit
 from tests.fakes import FakeProvider, FakeSearch, FakeSink
 from tests.fixtures.builders import DALAT_FIELDS, dalat_plan
@@ -202,7 +203,7 @@ def test_unknown_agent_from_router_falls_back_to_advice(db_pool, db_conn, conver
     # An agent of the old catalog fails the check, the repair names it again, the router gives up
     old = route("discover_ask")
     rig = Rig(db_pool, [old, old, "Try Hue in spring."])
-    with caplog.at_level(logging.INFO, logger="chat.chat_service"):
+    with caplog.at_level(logging.INFO, logger="orchestration.orchestrator"):
         events = rig.say(conversation.id, "Where should I go?")
     assert spoken(events) == "Try Hue in spring."
     assert recent_messages(db_conn, conversation.id, 2)[-1].intent == "advice"
@@ -211,7 +212,7 @@ def test_unknown_agent_from_router_falls_back_to_advice(db_pool, db_conn, conver
 
 def test_routing_logs_the_chosen_flow_and_the_reason(db_pool, conversation, caplog):
     rig = Rig(db_pool, [route("web_lookup"), "Bring a light jacket."])
-    with caplog.at_level(logging.INFO, logger="chat.chat_service"):
+    with caplog.at_level(logging.INFO, logger="orchestration.orchestrator"):
         rig.say(conversation.id, "What should I pack for Sapa?")
     assert "chat flow: web_lookup (classifier picked web_lookup, routed): fits" in caplog.text
 

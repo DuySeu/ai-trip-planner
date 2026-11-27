@@ -1,6 +1,6 @@
 # Intent của tin nhắn chat
 
-Mỗi tin nhắn của người dùng được router (`OrchestratorAgent`) đọc cùng 10 tin nhắn gần nhất, rồi chọn một trong 7 agent của `CATALOG` (`src/chat/chat_service.py:47`). Agent được chọn quyết định intent của câu trả lời (`AGENT_INTENT`, `src/chat/chat_service.py:97`), và intent đó được lưu ở `messages.intent`; phần có cấu trúc của câu trả lời nằm ở `messages.metadata` (bảng ở `docs/api.md`, mục `GET /conversations/{conversation_id}`). Mô tả của từng agent trong `CATALOG` là thứ duy nhất router dựa vào để chọn, nên muốn đổi cách phân loại thì sửa mô tả đó.
+Mỗi tin nhắn của người dùng được router (`OrchestratorAgent`) đọc cùng 10 tin nhắn gần nhất, rồi chọn một trong 7 agent của `CATALOG` (`src/orchestration/task_planner.py:20`). Agent được chọn quyết định intent của câu trả lời (`AGENT_INTENT`, `src/orchestration/task_planner.py:73`), và intent đó được lưu ở `messages.intent`; phần có cấu trúc của câu trả lời nằm ở `messages.metadata` (bảng ở `docs/api.md`, mục `GET /conversations/{conversation_id}`). Mô tả của từng agent trong `CATALOG` là thứ duy nhất router dựa vào để chọn, nên muốn đổi cách phân loại thì sửa mô tả đó.
 
 ## Câu hỏi nào ra intent nào
 
@@ -18,7 +18,7 @@ Mỗi tin nhắn của người dùng được router (`OrchestratorAgent`) đ�
 
 | Khi nào | Chạy gì |
 |---|---|
-| Tin nhắn gõ tay bị guardrail chặn (`GUARDRAIL_CONFIG` trong `src/chat/guard_turn.py`, prompt và denylist ở `src/guardrail/prompt/*.txt`: `denylist`, rồi `travel_only` chấm `off_topic`, `prompt_injection`, `harmful` từ 0.7) | Trả câu cố định `OFF_TOPIC` (`src/chat/guard_turn.py`), lưu `advice` với `{"blocked": true, "guard": ..., "category": ...}`. Guard chạy trước router (`src/chat/chat_service.py`, `_dispatch`); guard lỗi thì tin nhắn đi tiếp. Bấm thẻ không qua guard |
+| Tin nhắn gõ tay bị guardrail chặn (`GUARDRAIL_CONFIG` trong `src/orchestration/guard_turn.py`, prompt và denylist ở `src/guardrail/prompt/*.txt`: `denylist`, rồi `travel_only` chấm `off_topic`, `prompt_injection`, `harmful` từ 0.7) | Trả câu cố định `OFF_TOPIC` (`src/orchestration/guard_turn.py`), lưu `advice` với `{"blocked": true, "guard": ..., "category": ...}`. Guard chạy trước router (`src/orchestration/orchestrator.py`, `_dispatch`); guard lỗi thì tin nhắn đi tiếp. Bấm thẻ không qua guard |
 | `POST /chat` có `discover_message_id` | Đóng thẻ hỏi nhu cầu, gợi ý điểm đến từ draft hiện có. Lưu `discover` với `{"kind": "suggestions"}` |
 | `POST /chat` có `booking_message_id` và `dates` | Đóng thẻ chờ ngày, tìm khách sạn hoặc vé với ngày đã chọn. Lưu `booking_search` với `status = results` |
 | `PATCH /conversations/{id}/messages/{message_id}` trả lời một bước | Ghi câu trả lời vào thẻ và draft, không gọi AI |
@@ -27,12 +27,12 @@ Mỗi tin nhắn của người dùng được router (`OrchestratorAgent`) đ�
 
 ## Các quy tắc code đè lên lựa chọn của router
 
-- Router hỏi lại vì chưa rõ câu hỏi (`needs_clarification`): lưu `advice` với `metadata = {"clarify": true}` (`src/chat/chat_service.py:284-287`).
-- Router chọn một agent không có trong `CATALOG`, hoặc không chọn được agent nào sau một lần sửa: chạy `advice` (`src/chat/chat_service.py:292`).
-- Router chia câu hỏi thành nhiều bước: chỉ bước đầu tiên chạy, các bước sau bị bỏ (`src/chat/chat_service.py:289-290`).
-- `discover` khi đã có thẻ hỏi nhu cầu đang mở (người dùng gõ thay vì bấm): đóng thẻ đó rồi gợi ý luôn, không mở thẻ mới (`src/chat/discovery_turn.py:92-94`).
-- `hotel_search` hoặc `flight_search` khi trip đang mở và draft đều không có ngày, ngày đó đã qua hoặc sai luật: lưu thẻ chờ ngày `need_dates` thay vì tìm (`src/chat/booking_turn.py:58-60`). Vé luôn có nơi đi: nơi người dùng nói trong tin nhắn, rồi trip đang mở, `request_draft`, thành phố hiện tại (`default_origin`), cuối cùng là Hà Nội. Nơi người dùng tự nói được lưu vào `request_draft`, thành phố hiện tại thì không.
-- `edit_plan` khi không có trip đang mở có plan: trả câu cố định "Hãy mở chuyến đi bạn muốn thay đổi rồi nhắn lại cho mình nhé." (`src/chat/handlers.py:267-268`).
+- Router hỏi lại vì chưa rõ câu hỏi (`needs_clarification`): lưu `advice` với `metadata = {"clarify": true}` (`src/orchestration/orchestrator.py:108-111`).
+- Router chọn một agent không có trong `CATALOG`, hoặc không chọn được agent nào sau một lần sửa: chạy `advice` (`src/orchestration/task_planner.py:107`).
+- Router chia câu hỏi thành nhiều bước: chỉ bước đầu tiên chạy, các bước sau bị bỏ (`src/orchestration/task_planner.py:104-105`).
+- `discover` khi đã có thẻ hỏi nhu cầu đang mở (người dùng gõ thay vì bấm): đóng thẻ đó rồi gợi ý luôn, không mở thẻ mới (`src/orchestration/discovery_turn.py:94-96`).
+- `hotel_search` hoặc `flight_search` khi trip đang mở và draft đều không có ngày, ngày đó đã qua hoặc sai luật: lưu thẻ chờ ngày `need_dates` thay vì tìm (`src/orchestration/booking_turn.py:63-65`). Vé luôn có nơi đi: nơi người dùng nói trong tin nhắn, rồi trip đang mở, `request_draft`, thành phố hiện tại (`default_origin`), cuối cùng là Hà Nội. Nơi người dùng tự nói được lưu vào `request_draft`, thành phố hiện tại thì không.
+- `edit_plan` khi không có trip đang mở có plan: trả câu cố định "Hãy mở chuyến đi bạn muốn thay đổi rồi nhắn lại cho mình nhé." (`src/orchestration/handlers.py:206-207`).
 
 ## Ranh giới dễ nhầm
 

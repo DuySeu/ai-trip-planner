@@ -5,26 +5,20 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from psycopg import Connection
-
-from chat.events import ChatEvent, token_events
-from chat.history import message_for_model
 from core.exceptions import Conflict, EditRejected, InvalidLLMOutput, ResearchFailed
 from core.prompts import (
     plan_answer_prompt,
     travel_advice_prompt,
     trip_research_answer_prompt,
 )
-from db.repositories import conversations, jobs, messages, research, trips
+from db.repositories import conversations, jobs, research, trips
 from db.repositories.messages import MessageRow
 from db.repositories.research import SourceInput, SourceRow
-from db.repositories.trips import TripRow
 from domain.budget import over_budget_vnd, total_cost_vnd
-from domain.plan import Plan, PlanWarning
+from domain.plan import PlanWarning
 from domain.plan_edit import apply_edit
 from domain.plan_rules import check_plan
 from domain.trip_request import (
@@ -35,19 +29,20 @@ from domain.trip_request import (
     validate_request,
 )
 from models.model_router import CallContext
+from orchestration.events import ChatEvent, token_events
+from orchestration.state_manager import ChatContext, message_for_model
 from planning.plan_editor import compact_plan, propose_edit
 from service.tavily.search import SearchHit
 
 if TYPE_CHECKING:
-    # Imported for annotations only: chat_service imports this module
+    # Imported for annotations only: orchestrator imports this module
     from collections.abc import Iterator
 
-    from chat.chat_service import ChatDeps, ChatTurn
+    from orchestration.orchestrator import ChatDeps
+    from orchestration.state_manager import ChatTurn
 
 logger = logging.getLogger(__name__)
 
-HISTORY_MESSAGES = 10
-MAX_TRIPS_IN_CONTEXT = 20
 MAX_SOURCES_PER_KIND = 3
 # Replies written by code, as (English, Vietnamese)
 OPEN_TRIP = (
@@ -75,70 +70,14 @@ def localized(message: str, texts: tuple[str, str]) -> str:
     return texts[1] if VIETNAMESE_LETTER.search(message) else texts[0]
 
 
-# Everything a handler may put in front of the model for one turn
-@dataclass(frozen=True)
-class ChatContext:
-    trips: str
-    trip: TripRow | None
-    request: TripRequest | None
-    plan: Plan | None
-    sources: tuple[SourceRow, ...]
-    history: tuple[MessageRow, ...]
-
-
 # Web text as data: angle brackets are replaced so it cannot close or open a tag
 def data_text(text: str | None) -> str:
     return " ".join((text or "").replace("<", "(").replace(">", ")").split())
 
 
-# The request columns of a trip row as a TripRequest
-def trip_request_of(row: TripRow) -> TripRequest:
-    return TripRequest.model_validate(
-        {
-            "destination": {
-                "name": row.destination_name,
-                "country_code": row.destination_country,
-                "lat": row.destination_lat,
-                "lon": row.destination_lon,
-            },
-            "origin": row.origin,
-            "start_date": row.start_date,
-            "end_date": row.end_date,
-            "travelers": row.travelers,
-            "travel_styles": row.travel_styles,
-            "budget_amount": row.budget_amount,
-            "budget_scope": row.budget_scope,
-            "language": row.language,
-            "notes": row.notes,
-        }
-    )
-
-
 # The group's budget for a prompt; none when the planner suggested it
 def _budget_text(budget: Decimal | None) -> str:
     return "none given" if budget is None else f"{budget:,.0f} VND for the whole group"
-
-
-# Read the user's trips, the open trip with its plan and sources, and the recent messages
-def load_context(conn: Connection[Any], turn: ChatTurn) -> ChatContext:
-    lines = [
-        f"- {t.destination_name} ({t.destination_country}), {t.start_date.isoformat()} to "
-        f"{t.end_date.isoformat()}, {t.status}"
-        for t in trips.list_trips(conn, turn.user_id, MAX_TRIPS_IN_CONTEXT, 0)
-    ]
-    trip = trips.get_trip(conn, turn.trip_id) if turn.trip_id else None
-    plan = Plan.model_validate(trip.plan) if trip is not None and trip.plan else None
-    sources = research.sources_for_trip(conn, trip.id) if trip is not None else []
-    recent = messages.recent_messages(conn, turn.conversation_id, HISTORY_MESSAGES + 1)
-    history = tuple(m for m in recent if m.id != turn.message.id)[-HISTORY_MESSAGES:]
-    return ChatContext(
-        trips="\n".join(lines),
-        trip=trip,
-        request=trip_request_of(trip) if trip is not None else None,
-        plan=plan,
-        sources=tuple(sources),
-        history=history,
-    )
 
 
 # The sources as <source id kind title url>snippet</source> lines

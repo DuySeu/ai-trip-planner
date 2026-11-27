@@ -12,8 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 from agents.create_trip_agent import CreateTripAgent, drop_past_dates
 from agents.discover_suggest_agent import DiscoverSuggestAgent
-from chat.events import ChatEvent, metadata_event, token_events
-from chat.handlers import HISTORY_MESSAGES, VIETNAMESE_LETTER, conversation_text, sources_text
 from core.exceptions import Conflict, InvalidLLMOutput, LLMUnavailable, ResearchFailed
 from db.repositories import conversations, messages, research
 from db.repositories.research import SourceInput
@@ -21,12 +19,16 @@ from domain.discovery import RequestDraft, TripFormExtract, merge_draft
 from domain.questionnaire import first_missing_step, questionnaire_metadata
 from domain.trip_request import Language, today_in_vietnam
 from models.model_router import CallContext
+from orchestration.events import ChatEvent, metadata_event, token_events
+from orchestration.handlers import VIETNAMESE_LETTER, conversation_text, sources_text
+from orchestration.state_manager import HISTORY_MESSAGES
 from research.queries import STYLES_VI
 from service.tavily.search import SearchHit
 
 if TYPE_CHECKING:
-    # Imported for annotations only: chat_service imports this module
-    from chat.chat_service import ChatDeps, ChatTurn
+    # Imported for annotations only: orchestrator imports this module
+    from orchestration.orchestrator import ChatDeps
+    from orchestration.state_manager import ChatTurn
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ Usage in code:
     logger.info("reading input")
 
 Terminal output (one colored line per record):
-    17:23:31 | src/chat/chat_service.py | INFO | reading input | request_id=f02c3056
+    17:23:31 | src/orchestration/orchestrator.py | INFO | reading input | request_id=f02c3056
     <time> | <file path from the working directory> | <LEVEL> | <message> | <log_context fields>
 """
 

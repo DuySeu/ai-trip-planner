@@ -1,4 +1,4 @@
--- Initial schema. See docs/superpowers/specs/2026-11-16-ai-trip-planner-design.md, section "Database".
+-- Initial schema. section "Database".
 -- Enum-like columns are text + CHECK so adding a value is a one-line migration.
 
 CREATE TABLE users (
@@ -10,6 +10,7 @@ CREATE TABLE users (
     last_seen_at timestamptz
 );
 
+-- Trips are kept until their user deletes them
 CREATE TABLE trips (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
@@ -25,8 +26,9 @@ CREATE TABLE trips (
         cardinality(travel_styles) >= 1
         AND travel_styles <@ ARRAY['relax', 'adventure', 'culture', 'food', 'nature', 'nightlife', 'shopping', 'luxury', 'budget']
     ),
-    budget_amount       numeric(14, 2) NOT NULL CHECK (budget_amount > 0),
-    budget_scope        text NOT NULL CHECK (budget_scope IN ('per_person', 'total')),
+    -- The visitor may leave the budget to the planner: amount and scope are then both null
+    budget_amount       numeric(14, 2) CHECK (budget_amount > 0),
+    budget_scope        text CHECK (budget_scope IN ('per_person', 'total')),
     local_currency      char(3) CHECK (local_currency ~ '^[A-Z]{3}$'),
     language            text NOT NULL DEFAULT 'en' CHECK (language IN ('en', 'vi')),
     notes               text CHECK (char_length(notes) <= 2000),
@@ -41,18 +43,17 @@ CREATE TABLE trips (
     plan_revision       int NOT NULL DEFAULT 0 CHECK (plan_revision >= 0),
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
-    expires_at          timestamptz NOT NULL,
     CHECK (end_date >= start_date),
     -- At most 30 days, both ends included
     CHECK (end_date - start_date < 30),
     -- Domestic trips use VND only; trips abroad always have a local currency
     CHECK ((destination_country = 'VN') = (local_currency IS NULL)),
     -- The plan and its totals are set together
-    CHECK (num_nulls(plan, total_cost_vnd, over_budget) IN (0, 3))
+    CHECK (num_nulls(plan, total_cost_vnd, over_budget) IN (0, 3)),
+    CONSTRAINT trips_budget_pair CHECK ((budget_amount IS NULL) = (budget_scope IS NULL))
 );
 
 CREATE INDEX trips_user_id_idx ON trips (user_id, created_at DESC);
-CREATE INDEX trips_expires_at_idx ON trips (expires_at);
 
 -- Not tied to one task or one trip: any conversation reads every trip of its user. Lives until its user is deleted.
 CREATE TABLE conversations (
@@ -61,23 +62,40 @@ CREATE TABLE conversations (
     title         text CHECK (char_length(title) <= 80),
     request_draft jsonb CHECK (request_draft IS NULL OR jsonb_typeof(request_draft) = 'object'),
     created_at    timestamptz NOT NULL DEFAULT now(),
-    updated_at    timestamptz NOT NULL DEFAULT now()
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    -- The chat model the visitor picked; null uses the CHAT_MODELS chain ("Auto").
+    -- Not checked against a model list: that list changes with scripts/sync_models.sh and the provider
+    chat_model    text CHECK (char_length(chat_model) <= 200)
 );
 
 CREATE INDEX conversations_user_id_idx ON conversations (user_id, created_at DESC);
 
+-- intent only says which flow answered; the structured part (cards, form state, questionnaire answers) is in metadata
 CREATE TABLE messages (
     id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id   uuid NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
     role              text NOT NULL CHECK (role IN ('user', 'assistant')),
     content           text NOT NULL,
     intent            text CHECK (intent IN (
-        'plan_answer', 'plan_editor', 'trip_research', 'travel_advice', 'clarification',
-        'ask', 'suggest', 'answer'
+        'advice', 'discover', 'booking_search', 'create_trip', 'edit_plan'
     )),
-    suggestions       jsonb CHECK (suggestions IS NULL OR jsonb_typeof(suggestions) = 'array'),
+    metadata          jsonb,
     created_at        timestamptz NOT NULL DEFAULT now(),
-    CHECK (role <> 'user' OR char_length(content) BETWEEN 1 AND 4000)
+    CHECK (role <> 'user' OR char_length(content) BETWEEN 1 AND 4000),
+    -- coalesce: a CHECK that comes out NULL (no metadata) would pass
+    CONSTRAINT messages_create_trip_status_check CHECK (
+        intent IS DISTINCT FROM 'create_trip'
+        OR coalesce(metadata ->> 'status', '') IN ('open', 'created', 'canceled')
+    ),
+    CONSTRAINT messages_booking_search_check CHECK (
+        intent IS DISTINCT FROM 'booking_search'
+        OR (coalesce(metadata ->> 'kind', '') IN ('hotel', 'flight')
+            AND coalesce(metadata ->> 'status', '') IN ('need_dates', 'done', 'results'))
+    ),
+    CONSTRAINT messages_discover_kind_check CHECK (
+        intent IS DISTINCT FROM 'discover'
+        OR coalesce(metadata ->> 'kind', '') IN ('questionnaire', 'suggestions')
+    )
 );
 
 CREATE INDEX messages_conversation_idx ON messages (conversation_id, created_at);
@@ -143,8 +161,9 @@ CREATE TABLE llm_calls (
     conversation_id uuid REFERENCES conversations (id) ON DELETE SET NULL,
     -- Chat calls: the user message that triggered them (it is saved before any call, unlike the reply)
     message_id      uuid REFERENCES messages (id) ON DELETE SET NULL,
+    -- guard: the chat guardrail's topic check; embed: the guardrail's embedding guard
     purpose         text NOT NULL CHECK (purpose IN (
-        'generate', 'repair', 'classify', 'edit', 'answer', 'discover', 'suggest'
+        'generate', 'repair', 'classify', 'edit', 'answer', 'discover', 'suggest', 'guard', 'embed'
     )),
     model_id        text NOT NULL,
     input_tokens    int,
@@ -160,8 +179,9 @@ CREATE TABLE llm_calls (
 CREATE INDEX llm_calls_created_idx ON llm_calls (created_at);
 CREATE INDEX llm_calls_message_idx ON llm_calls (message_id);
 
+-- Each LLM provider's daily quota block is kept under its own name
 CREATE TABLE quota_blocks (
-    service       text PRIMARY KEY CHECK (service IN ('openrouter', 'tavily')),
+    service       text PRIMARY KEY CHECK (service IN ('openrouter', 'openai', 'bedrock', 'tavily')),
     blocked_until timestamptz NOT NULL,
     reason        text
 );

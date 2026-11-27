@@ -8,8 +8,6 @@ from typing import Any
 import pytest
 from psycopg_pool import ConnectionPool
 
-from chat.chat_service import ChatDeps, prepare_message, stream_reply
-from chat.events import ChatEvent
 from core.constants import ModelId
 from core.exceptions import QuotaExhausted, ResearchFailed
 from core.settings import load_settings
@@ -18,6 +16,9 @@ from db.repositories.messages import recent_messages
 from db.repositories.users import claim_user
 from domain.trip_request import Language
 from models.model_router import ModelRouter
+from orchestration.events import ChatEvent
+from orchestration.orchestrator import ChatDeps, stream_reply
+from orchestration.state_manager import prepare_message
 from research.places import Place
 from tests.fakes import FakeProvider, FakeSearch, FakeSink
 
