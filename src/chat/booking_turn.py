@@ -119,8 +119,9 @@ def _search(
         shown = dates.model_dump(mode="json", include={"depart", "return_"}, by_alias=True)
 
     task = SEARCH_TASK[kind]
+    country = data.request.destination.country_code if data.request else None
     try:
-        hits = deps.search(f"{query} {month:%m/%Y}", task)
+        hits = deps.search(f"{query} {month:%m/%Y}", task, country)
     except ResearchFailed as exc:
         logger.warning("%s search failed: %s", kind, exc)
         hits = []

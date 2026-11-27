@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any, Protocol
 
 
 # The part of the Tavily client used here; tests pass a fake
 class TavilyClient(Protocol):
-    # One search; the answer holds a "results" list of title, url and content
-    def search(
-        self, query: str, max_results: int = ..., include_domains: Sequence[str] = ...
-    ) -> dict[str, Any]: ...
+    # One search with Tavily's request parameters as keywords; the answer holds a "results" list of
+    # title, url and content
+    def search(self, query: str, **params: Any) -> dict[str, Any]: ...
 
 
 # The real client; the SDK is imported here so code that injects its own client does not need it

@@ -53,7 +53,10 @@ def run_research(
     dest = request.destination
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        searches = {kind: pool.submit(deps.search, query, kind) for kind, query in queries.items()}
+        searches = {
+            kind: pool.submit(deps.search, query, kind, dest.country_code)
+            for kind, query in queries.items()
+        }
         weather = pool.submit(
             deps.weather, dest.lat, dest.lon, request.start_date, request.end_date, today
         )

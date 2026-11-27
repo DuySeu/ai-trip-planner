@@ -173,7 +173,9 @@ def test_plan_source_ids_all_resolve_to_saved_sources(db_pool, db_conn, queued_t
 
 @pytest.mark.parametrize("blocker", ["openrouter", "search"])
 def test_quota_exhausted_fails_trip_without_retry(db_pool, db_conn, queued_trip, blocker):
-    def search_over_quota(query: str, task: str) -> list[SearchHit]:
+    def search_over_quota(
+        query: str, task: str, country_code: str | None = None
+    ) -> list[SearchHit]:
         raise QuotaExhausted(NOW + timedelta(days=1))
 
     rig = make_rig(db_pool, [answer()], search=search_over_quota if blocker == "search" else None)
@@ -207,7 +209,7 @@ def test_llm_budget_exceeded_fails_trip_without_retry(db_pool, db_conn, queued_t
     assert rig.provider.calls == []
 
 
-def no_search(query: str, task: str) -> list[SearchHit]:
+def no_search(query: str, task: str, country_code: str | None = None) -> list[SearchHit]:
     raise ResearchFailed("tavily is down")
 
 

@@ -182,7 +182,7 @@ Trạng thái trip (`status`): `queued`, `researching`, `planning`, `ready`, `fa
 
 Tạo trip và job tạo plan trong cùng một transaction. API trả về ngay; worker sẽ lấy job và viết plan, client poll `GET /trips/{id}` để xem tiến độ. Code: `src/api/routes/trips.py:23`.
 
-Payload (`CreateTripBody` = `TripRequest` + `user_id` + `message_id` tùy chọn, `src/domain/trip_request.py:73`):
+Payload (`CreateTripBody` = `TripRequest` + `user_id` + `message_id` tùy chọn, `src/domain/trip_request.py:83`):
 
 ```json
 {

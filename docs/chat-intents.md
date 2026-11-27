@@ -32,7 +32,7 @@ Mỗi tin nhắn của người dùng được router (`OrchestratorAgent`) đ�
 - Router chia câu hỏi thành nhiều bước: chỉ bước đầu tiên chạy, các bước sau bị bỏ (`src/chat/chat_service.py:289-290`).
 - `discover` khi đã có thẻ hỏi nhu cầu đang mở (người dùng gõ thay vì bấm): đóng thẻ đó rồi gợi ý luôn, không mở thẻ mới (`src/chat/discovery_turn.py:92-94`).
 - `hotel_search` hoặc `flight_search` khi trip đang mở và draft đều không có ngày, ngày đó đã qua hoặc sai luật: lưu thẻ chờ ngày `need_dates` thay vì tìm (`src/chat/booking_turn.py:58-60`). Vé luôn có nơi đi: nơi người dùng nói trong tin nhắn, rồi trip đang mở, `request_draft`, thành phố hiện tại (`default_origin`), cuối cùng là Hà Nội. Nơi người dùng tự nói được lưu vào `request_draft`, thành phố hiện tại thì không.
-- `edit_plan` khi không có trip đang mở có plan: trả câu cố định "Hãy mở chuyến đi bạn muốn thay đổi rồi nhắn lại cho mình nhé." (`src/chat/handlers.py:261-263`).
+- `edit_plan` khi không có trip đang mở có plan: trả câu cố định "Hãy mở chuyến đi bạn muốn thay đổi rồi nhắn lại cho mình nhé." (`src/chat/handlers.py:267-268`).
 
 ## Ranh giới dễ nhầm
 

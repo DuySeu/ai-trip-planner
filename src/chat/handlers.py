@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -29,6 +28,7 @@ from domain.plan import Plan, PlanWarning
 from domain.plan_edit import apply_edit
 from domain.plan_rules import check_plan
 from domain.trip_request import (
+    VIETNAMESE_LETTER,
     TripRequest,
     budget_total_vnd,
     today_in_vietnam,
@@ -49,9 +49,6 @@ logger = logging.getLogger(__name__)
 HISTORY_MESSAGES = 10
 MAX_TRIPS_IN_CONTEXT = 20
 MAX_SOURCES_PER_KIND = 3
-VIETNAMESE_LETTER = re.compile(
-    r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", re.IGNORECASE
-)
 # Replies written by code, as (English, Vietnamese)
 OPEN_TRIP = (
     "Open the trip you want to change first, then ask me again.",
@@ -229,14 +226,16 @@ def give_travel_advice(
     yield from stream_answer(deps, travel_advice_prompt, content, call_ctx)
 
 
-# Search the web once (twice when the first search finds nothing), keep the hits, answer from them
+# Search the web once (twice when the first search finds nothing), favouring the open trip's
+# country, keep the hits, answer from them
 def answer_from_research(
     data: ChatContext, turn: ChatTurn, deps: ChatDeps, call_ctx: CallContext, query: str
 ) -> Iterator[ChatEvent]:
     hits: list[SearchHit] = []
+    country = data.request.destination.country_code if data.request else None
     for text in (query, f"{query} travel guide"):
         try:
-            hits = deps.search(text, "chat")
+            hits = deps.search(text, "chat", country)
         except ResearchFailed as exc:
             logger.warning("chat search failed: %s", exc)
             break

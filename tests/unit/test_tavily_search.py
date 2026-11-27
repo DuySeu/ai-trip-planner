@@ -7,8 +7,9 @@ import pytest
 
 from core.exceptions import QuotaExhausted, ResearchFailed
 from research.cache import MemoryCache
-from service.tavily.search import MAX_SNIPPET_CHARS, SearchHit, tavily_search
+from service.tavily.search import MAX_SNIPPET_CHARS, SearchHit, search_options, tavily_search
 from tests.fakes import FakeSink
+from utils.domain import PRICE_MAX_AGE_HOURS
 
 NOW = datetime(2026, 11, 17, 8, 0, tzinfo=UTC)
 QUOTA = "usage limit"
@@ -20,12 +21,12 @@ class FakeTavily:
         self.body = {"results": []} if body is None else body
         self.calls: list[tuple[str, int]] = []
         self.domains: list[list[str] | None] = []
+        self.params: list[dict[str, Any]] = []
 
-    def search(
-        self, query: str, max_results: int = 5, include_domains: list[str] | None = None
-    ) -> dict[str, Any]:
-        self.calls.append((query, max_results))
-        self.domains.append(include_domains)
+    def search(self, query: str, **params: Any) -> dict[str, Any]:
+        self.calls.append((query, params["max_results"]))
+        self.domains.append(params.get("include_domains"))
+        self.params.append(params)
         if isinstance(self.body, Exception):
             raise self.body
         return self.body
@@ -138,33 +139,95 @@ def test_no_include_domains_means_the_client_gets_none():
     assert client.domains == [None]
 
 
-def test_an_empty_allowlist_search_runs_again_over_the_whole_web():
-    class OpenWebOnly(FakeTavily):
-        def search(self, query, max_results=5, include_domains=None):
-            self.body = {"results": [] if include_domains else [result(1)]}
-            return super().search(query, max_results, include_domains)
-
-    client = OpenWebOnly()
-
-    hits = tavily_search(client, MemoryCache(), FakeSink(), "q", 5, QUOTA, NOW, ("a.com",))
-
-    assert [h.url for h in hits] == ["https://example.com/1"]
-    assert client.domains == [["a.com"], None]
-
-
-def test_an_allowlist_search_with_results_is_not_run_again():
+def test_include_domains_are_preferred_not_required():
     client = FakeTavily({"results": [result(1)]})
 
     tavily_search(client, MemoryCache(), FakeSink(), "q", 5, QUOTA, NOW, ("a.com",))
 
-    assert len(client.calls) == 1
+    assert client.params[0]["include_domains_mode"] == "prefer"
 
 
-def test_a_search_with_no_allowlist_and_no_results_is_not_run_again():
+def test_no_include_domains_sends_no_domains_mode():
+    client = FakeTavily({"results": [result(1)]})
+
+    tavily_search(client, MemoryCache(), FakeSink(), "q", 5, QUOTA, NOW)
+
+    assert "include_domains_mode" not in client.params[0]
+
+
+def test_an_allowlist_search_with_no_results_is_not_run_again():
     client = FakeTavily({"results": []})
 
-    assert tavily_search(client, MemoryCache(), FakeSink(), "q", 5, QUOTA, NOW) == []
+    assert tavily_search(client, MemoryCache(), FakeSink(), "q", 5, QUOTA, NOW, ("a.com",)) == []
     assert len(client.calls) == 1
+
+
+def test_options_are_sent_to_the_client():
+    client = FakeTavily({"results": [result(1)]})
+    options = {"language": "vi", "country": "vietnam"}
+
+    tavily_search(client, MemoryCache(), FakeSink(), "q", 5, QUOTA, NOW, (), options)
+
+    assert client.params == [{"max_results": 5, "language": "vi", "country": "vietnam"}]
+
+
+def test_cache_keeps_searches_with_different_options_apart():
+    client, cache = FakeTavily({"results": [result(1)]}), MemoryCache()
+
+    tavily_search(client, cache, FakeSink(), "q", 5, QUOTA, NOW, (), {"country": "japan"})
+    tavily_search(client, cache, FakeSink(), "q", 5, QUOTA, NOW, (), {"country": "thailand"})
+
+    assert len(client.calls) == 2
+
+
+def test_refused_live_fetch_runs_again_on_cached_copies():
+    class FlexFull(FakeTavily):
+        def search(self, query: str, **params: Any) -> dict[str, Any]:
+            if "max_age_hours" in params:
+                super().search(query, **params)
+                raise Exception("434 Client Error: Flex tier capacity exceeded")
+            return super().search(query, **params)
+
+    client = FlexFull({"results": [result(1)]})
+
+    hits = tavily_search(
+        client, MemoryCache(), FakeSink(), "q", 5, QUOTA, NOW, (), {"max_age_hours": 72}
+    )
+
+    assert len(hits) == 1
+    assert [("max_age_hours" in p) for p in client.params] == [True, False]
+
+
+def test_434_without_max_age_hours_raises_research_failed():
+    client = FakeTavily(Exception("434 Client Error: Flex tier capacity exceeded"))
+
+    with pytest.raises(ResearchFailed):
+        tavily_search(client, MemoryCache(), FakeSink(), "q", 5, QUOTA, NOW)
+
+    assert len(client.calls) == 1
+
+
+def test_options_language_follows_the_query():
+    assert search_options("khách sạn Đà Lạt", "chat", None)["language"] == "vi"
+    assert search_options("hotels in Bangkok", "chat", None)["language"] == "en"
+
+
+def test_options_boost_the_destination_country_for_local_tasks():
+    assert search_options("q", "food", "VN")["country"] == "vietnam"
+    assert search_options("q", "accommodation", "TH")["country"] == "thailand"
+
+
+def test_options_have_no_country_for_routes_discovery_or_unknown_codes():
+    assert "country" not in search_options("q", "transport", "JP")
+    assert "country" not in search_options("q", "discovery", "JP")
+    assert "country" not in search_options("q", "food", None)
+    assert "country" not in search_options("q", "food", "HK")
+
+
+def test_options_ask_fresh_copies_only_for_price_tasks():
+    assert search_options("q", "accommodation", None)["max_age_hours"] == PRICE_MAX_AGE_HOURS
+    assert search_options("q", "transport", None)["max_age_hours"] == PRICE_MAX_AGE_HOURS
+    assert "max_age_hours" not in search_options("q", "activities", None)
 
 
 def test_cache_keeps_allowlisted_and_open_searches_apart():

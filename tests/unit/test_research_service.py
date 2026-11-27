@@ -85,6 +85,14 @@ def test_each_search_gets_its_research_kind_as_task():
     assert sorted(search.tasks) == sorted(build_queries(dalat_request()))
 
 
+def test_each_search_gets_the_destination_country():
+    search = FakeSearch(default=[HIT])
+
+    run_research(bangkok_request(), TRIP_ID, deps_for(search, Calls()), TODAY)
+
+    assert search.countries == ["TH"] * 5
+
+
 def test_trip_abroad_gets_local_currency_rate_and_date():
     calls, search = Calls(), FakeSearch(default=[HIT])
 

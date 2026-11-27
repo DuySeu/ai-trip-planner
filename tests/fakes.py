@@ -113,11 +113,13 @@ class FakeSearch:
         self._default = list(default)
         self.calls: list[str] = []
         self.tasks: list[str] = []
+        self.countries: list[str | None] = []
 
     # Return the results scripted for the query, else the default
-    def __call__(self, query: str, task: str) -> list[Any]:
+    def __call__(self, query: str, task: str, country_code: str | None = None) -> list[Any]:
         self.calls.append(query)
         self.tasks.append(task)
+        self.countries.append(country_code)
         value = self._results.get(query, self._default)
         if isinstance(value, Exception):
             raise value

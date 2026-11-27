@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -17,6 +18,9 @@ MAX_TRIP_DAYS = 30
 NAME_MAX_LEN = 50
 PLACE_MAX_LEN = 200
 NOTES_MAX_LEN = 2000
+VIETNAMESE_LETTER = re.compile(
+    r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", re.IGNORECASE
+)
 # Control characters kept in free text: line breaks and tabs from a textarea
 KEPT_CONTROLS = {"\n", "\t"}
 
@@ -38,6 +42,12 @@ def clean_text(value: str, max_len: int) -> str:
     if len(cleaned) > max_len:
         raise ValueError(f"must be at most {max_len} characters")
     return cleaned
+
+
+# "vi" when the text has a Vietnamese letter, else "en".
+# ponytail: a diacritics check; Vietnamese typed without accents gets English, add a detector if it matters
+def language_of(text: str) -> Language:
+    return "vi" if VIETNAMESE_LETTER.search(text) else "en"
 
 
 # A user name as stored: NFC, trimmed, 1 to 50 characters
